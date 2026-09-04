@@ -228,3 +228,58 @@ exception when duplicate_object then null; end $$;
 do $$ begin
   alter publication supabase_realtime add table public.notifications;
 exception when duplicate_object then null; end $$;
+
+
+-- PULSE Team & Invitation upgrade
+alter table public.profiles add column if not exists email text;
+create unique index if not exists profiles_email_unique_idx on public.profiles(lower(email)) where email is not null;
+
+create or replace function public.handle_new_user() returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  insert into public.profiles (id, full_name, email)
+  values (new.id, coalesce(new.raw_user_meta_data->>'full_name', 'PULSE Member'), lower(new.email))
+  on conflict (id) do update set email = excluded.email;
+  return new;
+end;
+$$;
+
+create table if not exists public.workspace_invitations (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references public.workspaces(id) on delete cascade,
+  email text not null,
+  role workspace_role not null default 'member',
+  status text not null default 'pending' check (status in ('pending','accepted','revoked')),
+  invited_by uuid not null references public.profiles(id) on delete restrict,
+  created_at timestamptz not null default now(),
+  accepted_at timestamptz
+);
+create unique index if not exists workspace_invites_pending_unique on public.workspace_invitations(workspace_id, lower(email)) where status = 'pending';
+create index if not exists workspace_invites_workspace_idx on public.workspace_invitations(workspace_id, created_at desc);
+
+alter table public.workspace_invitations enable row level security;
+drop policy if exists workspace_invites_select_admin on public.workspace_invitations;
+create policy workspace_invites_select_admin on public.workspace_invitations for select to authenticated using (public.is_workspace_admin(workspace_id));
+drop policy if exists workspace_invites_insert_admin on public.workspace_invitations;
+create policy workspace_invites_insert_admin on public.workspace_invitations for insert to authenticated with check (public.is_workspace_admin(workspace_id) and invited_by = auth.uid());
+drop policy if exists workspace_invites_update_admin on public.workspace_invitations;
+create policy workspace_invites_update_admin on public.workspace_invitations for update to authenticated using (public.is_workspace_admin(workspace_id)) with check (public.is_workspace_admin(workspace_id));
+
+create or replace function public.create_workspace_with_owner(workspace_name text, workspace_slug text)
+returns public.workspaces
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare new_workspace public.workspaces;
+begin
+  if auth.uid() is null then raise exception 'Not authenticated'; end if;
+  insert into public.workspaces(name, slug, owner_id) values (workspace_name, workspace_slug, auth.uid()) returning * into new_workspace;
+  insert into public.workspace_members(workspace_id, user_id, role) values (new_workspace.id, auth.uid(), 'owner');
+  return new_workspace;
+end;
+$$;
+grant execute on function public.create_workspace_with_owner(text,text) to authenticated;
+
+-- Re-run this trigger definition after applying the upgrade.
+drop trigger if exists on_auth_user_created on auth.users;
+create trigger on_auth_user_created after insert on auth.users for each row execute procedure public.handle_new_user();

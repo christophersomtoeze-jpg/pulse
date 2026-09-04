@@ -7,6 +7,22 @@ export interface WorkspaceSummary {
   memberCount: number;
 }
 
+export type WorkspaceRole = 'owner' | 'admin' | 'member';
+export interface WorkspaceMember {
+  userId: string;
+  name: string;
+  email: string;
+  role: WorkspaceRole;
+  joinedAt: string;
+}
+export interface WorkspaceInvite {
+  id: string;
+  email: string;
+  role: WorkspaceRole;
+  status: 'pending' | 'accepted' | 'revoked';
+  createdAt: string;
+}
+
 export async function loadWorkspaceData(workspaceId?: string) {
   if (!supabase || !workspaceId) return null;
 
@@ -107,11 +123,54 @@ export async function getCurrentWorkspace(userId: string): Promise<WorkspaceSumm
 export async function createWorkspace(userId: string, name: string) {
   if (!supabase) throw new Error('Supabase is not configured.');
   const slug = `${name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'workspace'}-${crypto.randomUUID().slice(0, 8)}`;
-  const { error } = await supabase.from('workspaces').insert({ name, slug, owner_id: userId });
+  const { data, error } = await supabase.rpc('create_workspace_with_owner', { workspace_name: name, workspace_slug: slug });
   if (error) throw new Error(error.message);
-  const { data: workspace, error: lookupError } = await supabase.from('workspaces').select('id,name').eq('slug', slug).single();
+  return data as { id: string; name: string };
+}
+
+export async function listWorkspaceMembers(workspaceId: string): Promise<WorkspaceMember[]> {
+  if (!supabase) return [];
+  const { data, error } = await supabase.from('workspace_members').select('user_id,role,created_at,profiles:user_id(full_name,email)').eq('workspace_id', workspaceId).order('created_at', { ascending: true });
+  if (error) throw new Error(error.message);
+  return (data ?? []).map((row: any) => ({
+    userId: row.user_id,
+    name: row.profiles?.full_name || 'PULSE Member',
+    email: row.profiles?.email || '—',
+    role: row.role,
+    joinedAt: row.created_at,
+  }));
+}
+
+export async function listWorkspaceInvites(workspaceId: string): Promise<WorkspaceInvite[]> {
+  if (!supabase) return [];
+  const { data, error } = await supabase.from('workspace_invitations').select('id,email,role,status,created_at').eq('workspace_id', workspaceId).order('created_at', { ascending: false });
+  if (error) throw new Error(error.message);
+  return (data ?? []).map((row: any) => ({ id: row.id, email: row.email, role: row.role, status: row.status, createdAt: row.created_at }));
+}
+
+export async function inviteToWorkspace(workspaceId: string, email: string, role: WorkspaceRole = 'member') {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const cleanEmail = email.trim().toLowerCase();
+  const { data: existing, error: lookupError } = await supabase.from('profiles').select('id,email').eq('email', cleanEmail).maybeSingle();
   if (lookupError) throw new Error(lookupError.message);
-  const { error: memberError } = await supabase.from('workspace_members').insert({ workspace_id: workspace.id, user_id: userId, role: 'owner' });
-  if (memberError) throw new Error(memberError.message);
-  return workspace;
+  if (existing?.id) {
+    const { error } = await supabase.from('workspace_members').upsert({ workspace_id: workspaceId, user_id: existing.id, role }, { onConflict: 'workspace_id,user_id' });
+    if (error) throw new Error(error.message);
+    return { added: true, email: cleanEmail };
+  }
+  const { data, error } = await supabase.from('workspace_invitations').insert({ workspace_id: workspaceId, email: cleanEmail, role }).select('id,email,role,status,created_at').single();
+  if (error) throw new Error(error.message);
+  return { added: false, invitation: data };
+}
+
+export async function updateWorkspaceMemberRole(workspaceId: string, userId: string, role: WorkspaceRole) {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const { error } = await supabase.from('workspace_members').update({ role }).eq('workspace_id', workspaceId).eq('user_id', userId);
+  if (error) throw new Error(error.message);
+}
+
+export async function removeWorkspaceMember(workspaceId: string, userId: string) {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const { error } = await supabase.from('workspace_members').delete().eq('workspace_id', workspaceId).eq('user_id', userId);
+  if (error) throw new Error(error.message);
 }
