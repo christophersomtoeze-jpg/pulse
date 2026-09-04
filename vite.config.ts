@@ -13,4 +13,16 @@ export default defineConfig({
   optimizeDeps: {
     exclude: ['lucide-react'],
   },
+  build: {
+    chunkSizeWarningLimit: 600,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          supabase: ['@supabase/supabase-js', '@supabase/ssr'],
+          motion: ['framer-motion'],
+          icons: ['lucide-react'],
+        },
+      },
+    },
+  },
 });

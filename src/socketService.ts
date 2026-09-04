@@ -6,12 +6,12 @@ export type PulseEventType =
 
 export type SocketState = 'connecting' | 'connected' | 'disconnected' | 'reconnecting';
 
-type EventHandler = (data: any) => void;
+type EventHandler = (data: unknown) => void;
 type StateHandler = (state: SocketState) => void;
 
 interface OutboundMessage {
   event: PulseEventType;
-  payload: any;
+  payload: unknown;
 }
 
 export class PulseSocket {
@@ -68,7 +68,7 @@ export class PulseSocket {
     };
   }
 
-  public emit(event: PulseEventType, payload: any): void {
+  public emit(event: PulseEventType, payload: unknown): void {
     const msg: OutboundMessage = { event, payload };
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(msg));
