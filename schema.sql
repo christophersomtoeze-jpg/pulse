@@ -2,11 +2,30 @@
 -- Run this once in Supabase SQL Editor.
 create extension if not exists pgcrypto;
 
-create type public.workspace_role as enum ('owner', 'admin', 'member', 'guest');
-create type public.discussion_status as enum ('active', 'heating', 'settling', 'archived');
-create type public.decision_status as enum ('decided', 'in-review', 'revisiting');
-create type public.poll_status as enum ('draft', 'open', 'closed');
-create type public.intent_wave as enum ('whisper', 'standard', 'pulse');
+do $$ begin
+  create type public.workspace_role as enum ('owner', 'admin', 'member', 'guest');
+exception when duplicate_object then null;
+end $$;
+
+do $$ begin
+  create type public.discussion_status as enum ('active', 'heating', 'settling', 'archived');
+exception when duplicate_object then null;
+end $$;
+
+do $$ begin
+  create type public.decision_status as enum ('decided', 'in-review', 'revisiting');
+exception when duplicate_object then null;
+end $$;
+
+do $$ begin
+  create type public.poll_status as enum ('draft', 'open', 'closed');
+exception when duplicate_object then null;
+end $$;
+
+do $$ begin
+  create type public.intent_wave as enum ('whisper', 'standard', 'pulse');
+exception when duplicate_object then null;
+end $$;
 
 create table if not exists public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
