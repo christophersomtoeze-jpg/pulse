@@ -1,27 +1,35 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import {
-  Activity, Bot, FolderOpen, Send, Users, Vote, X,
-} from 'lucide-react';
+import { FolderOpen, Home, LayoutGrid, MessageCircle, Send, Sparkles, ShieldAlert, PieChart, CheckSquare, Users, X } from 'lucide-react';
 import { AuthProvider, useAuth } from '@/auth/AuthProvider';
-import { activePolls as demoPolls, topicNodes as demoTopics } from '@/data';
-import {
-  getCurrentWorkspace, loadWorkspaceData, sendMessage, createWorkspace,
-  listWorkspaceMembers, listWorkspaceInvites, inviteToWorkspace, updateWorkspaceMemberRole,
-  removeWorkspaceMember, listDecisions, createDecision, loadDashboardData,
-  type WorkspaceMember, type WorkspaceInvite, type WorkspaceRole, type DashboardData,
-} from '@/lib/pulseApi';
-import { supabase, isSupabaseConfigured } from '@/lib/supabase';
-import type { ActivePoll, DecisionSummary, IntentWave, TopicNode } from '@/types';
+import { AuthScreen } from '@/components/auth/AuthScreen';
+import { TeamPanel, TeamView } from '@/components/TeamPanel';
+import { Sidebar } from '@/components/layout/Sidebar';
+import { NavDrawer } from '@/components/home/NavDrawer';
 import { HomeHeader } from '@/components/home/HomeHeader';
-import { NavDrawer, type HomeView } from '@/components/home/NavDrawer';
-import { LivingStateLedger } from '@/components/home/LivingStateLedger';
-import { DiscussionsList } from '@/components/home/DiscussionsList';
 import { MessageComposer } from '@/components/home/MessageComposer';
+import { DiscussionsView } from '@/components/views/DiscussionsView';
+import { PollsView } from '@/components/views/PollsView';
+import { ResourcesView } from '@/components/views/ResourcesView';
+import { NotificationsView } from '@/components/views/NotificationsView';
+import { InvitationsView } from '@/components/views/InvitationsView';
+import { SettingsView } from '@/components/views/SettingsView';
+import { HelpView } from '@/components/views/HelpView';
+import { ComingSoonView } from '@/components/views/ComingSoonView';
+import { DashboardView } from '@/components/DashboardView';
 import { DecisionsListView } from '@/components/decisions/DecisionsListView';
 import { NewDecisionModal } from '@/components/decisions/NewDecisionModal';
 import { DecisionRoom } from '@/components/decisions/DecisionRoom';
-import { DashboardView } from '@/components/DashboardView';
+import { KeyboardShortcutsModal } from '@/components/KeyboardShortcutsModal';
+import type { AppView } from '@/lib/viewTypes';
+import { activePolls as demoPolls, topicNodes as demoTopics } from '@/data';
+import {
+  getCurrentWorkspace, loadWorkspaceData, sendMessage, createWorkspace,
+  listWorkspaceMembers, listWorkspaceInvites, listDecisions, createDecision, loadDashboardData,
+  type WorkspaceMember, type DashboardData,
+} from '@/lib/pulseApi';
+import { supabase, isSupabaseConfigured } from '@/lib/supabase';
+import type { ActivePoll, DecisionSummary, IntentWave, TopicNode } from '@/types';
 
 const intentLabels: Record<IntentWave, string> = { whisper: 'Whisper', standard: 'Standard', pulse: 'Pulse Alert' };
 
@@ -31,49 +39,13 @@ const demoResources = [
   { name: 'Resources', icon: FolderOpen },
 ];
 
-/** Fills the Ledger/Decisions views with something to look at before Supabase is configured. */
+/** Fills the Ledger/Decisions/Dashboard views with something to look at before Supabase is configured. */
 function demoDecisionSummaries(): DecisionSummary[] {
   return [
     { id: 'demo-1', workspaceId: 'demo', title: 'Brand Identity', description: 'Locking the wordmark-only direction.', status: 'decided', outcome: 'approved', deadline: null, ownerId: null, ownerName: 'Sarah Chen', createdBy: 'demo', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), decidedAt: new Date().toISOString() },
     { id: 'demo-2', workspaceId: 'demo', title: 'Launch Strategy', description: 'Q3 soft launch timeline and channels.', status: 'in-review', outcome: null, deadline: null, ownerId: null, ownerName: 'Marcus Lee', createdBy: 'demo', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), decidedAt: null },
     { id: 'demo-3', workspaceId: 'demo', title: 'AI Integration', description: 'Recommendation engine rollout.', status: 'in-review', outcome: null, deadline: null, ownerId: null, ownerName: 'Aisha Patel', createdBy: 'demo', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), decidedAt: null },
   ];
-}
-
-function AuthScreen() {
-  const { signIn, signUp, configured } = useAuth();
-  const [mode, setMode] = useState<'login' | 'signup'>('login');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [name, setName] = useState('');
-  const [error, setError] = useState('');
-  const [notice, setNotice] = useState('');
-  const [busy, setBusy] = useState(false);
-
-  const submit = async (e: FormEvent) => {
-    e.preventDefault(); setError(''); setNotice(''); setBusy(true);
-    const result = mode === 'login' ? await signIn(email, password) : await signUp(email, password, name);
-    if (result.error) setError(result.error);
-    else if (mode === 'signup' && result.needsConfirmation) setNotice('Account created. Check your email to confirm your address.');
-    setBusy(false);
-  };
-
-  return <div className="min-h-screen px-5 py-10 flex items-center justify-center">
-    <div className="w-full max-w-md glass-strong rounded-3xl p-6 shadow-card">
-      <div className="flex items-center gap-3 mb-8"><div className="h-11 w-11 rounded-2xl bg-gradient-to-br from-[#7c3aed] to-[#06b6d4] grid place-items-center shadow-glow"><Activity className="text-white" /></div><div><div className="font-display text-2xl font-bold">PULSE</div><div className="text-[10px] uppercase tracking-[.25em] text-ink-500">Decision OS</div></div></div>
-      <h1 className="font-display text-2xl font-semibold">{mode === 'login' ? 'Welcome back.' : 'Create your workspace account.'}</h1>
-      <p className="mt-2 text-sm text-ink-400">{configured ? 'Sign in to your real PULSE workspace.' : 'The interface is ready. Connect Supabase to enable real accounts.'}</p>
-      {!configured && <div className="mt-4 rounded-xl border border-alert-500/30 bg-alert-500/10 p-3 text-xs text-alert-300">Supabase is not configured. Add your VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY before production.</div>}
-      <form onSubmit={submit} className="mt-6 space-y-3">
-        {mode === 'signup' && <input required value={name} onChange={e=>setName(e.target.value)} placeholder="Full name" className="field" />}
-        <input required type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="Email address" className="field" />
-        <input required minLength={8} type="password" value={password} onChange={e=>setPassword(e.target.value)} placeholder="Password (8+ characters)" className="field" />
-        {error && <div className="text-sm text-ember-400">{error}</div>}{notice && <div className="text-sm text-flux-400">{notice}</div>}
-        <button disabled={busy || !configured} className="w-full rounded-xl bg-gradient-to-r from-[#7c3aed] to-[#06b6d4] py-3 font-semibold text-white disabled:opacity-40">{busy ? 'Working…' : mode === 'login' ? 'Sign in' : 'Create account'}</button>
-      </form>
-      <button onClick={()=>{setMode(mode==='login'?'signup':'login');setError('');setNotice('')}} className="mt-4 w-full text-sm text-pulse-300">{mode === 'login' ? 'Create an account' : 'Already have an account? Sign in'}</button>
-    </div>
-  </div>;
 }
 
 function WorkspaceSetup({ onCreated }: { onCreated: () => void }) {
@@ -89,61 +61,6 @@ function WorkspaceSetup({ onCreated }: { onCreated: () => void }) {
   };
   return <div className="min-h-screen px-5 py-10 grid place-items-center"><form onSubmit={submit} className="w-full max-w-md glass-strong rounded-3xl p-6"><div className="h-11 w-11 rounded-2xl bg-gradient-to-br from-[#7c3aed] to-[#06b6d4] grid place-items-center shadow-glow"><Users className="text-white"/></div><h1 className="mt-5 font-display text-2xl font-semibold">Create your workspace</h1><p className="mt-2 text-sm text-ink-400">This is your company or team space. You can invite people after the foundation is connected.</p><input required value={name} onChange={e=>setName(e.target.value)} placeholder="Company or workspace name" className="field mt-6"/><p className="mt-2 text-xs text-ink-500">Example: Acme Product Team</p>{error && <p className="mt-3 text-sm text-ember-400">{error}</p>}<button disabled={busy} className="primary-btn mt-5 w-full justify-center disabled:opacity-40">{busy?'Creating…':'Create workspace'}</button></form></div>;
 }
-
-function TeamPanel({ workspaceId, onClose }: { workspaceId: string; onClose: () => void }) {
-  const { user } = useAuth();
-  const [members, setMembers] = useState<WorkspaceMember[]>([]);
-  const [invites, setInvites] = useState<WorkspaceInvite[]>([]);
-  const [email, setEmail] = useState('');
-  const [role, setRole] = useState<WorkspaceRole>('member');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-  const [notice, setNotice] = useState('');
-
-  const refresh = useCallback(async () => {
-    const [m, i] = await Promise.all([listWorkspaceMembers(workspaceId), listWorkspaceInvites(workspaceId)]);
-    setMembers(m); setInvites(i);
-  }, [workspaceId]);
-  useEffect(() => { refresh().catch(e => setError(e instanceof Error ? e.message : 'Could not load team')); }, [refresh]);
-
-  const invite = async (e: FormEvent) => {
-    e.preventDefault(); if (!email.trim()) return; setBusy(true); setError(''); setNotice('');
-    try {
-      const result = await inviteToWorkspace(workspaceId, email, role);
-      setEmail('');
-      setNotice(result.added ? 'Existing PULSE user added to the workspace.' : 'Invitation saved. Email delivery will be connected next.');
-      await refresh();
-    } catch (e) { setError(e instanceof Error ? e.message : 'Could not invite member'); }
-    finally { setBusy(false); }
-  };
-
-  const changeRole = async (member: WorkspaceMember, next: WorkspaceRole) => {
-    if (member.userId === user?.id && member.role === 'owner') return;
-    try { await updateWorkspaceMemberRole(workspaceId, member.userId, next); await refresh(); }
-    catch (e) { setError(e instanceof Error ? e.message : 'Could not update role'); }
-  };
-
-  const remove = async (member: WorkspaceMember) => {
-    if (member.userId === user?.id) return;
-    if (!confirm(`Remove ${member.email} from this workspace?`)) return;
-    try { await removeWorkspaceMember(workspaceId, member.userId); await refresh(); }
-    catch (e) { setError(e instanceof Error ? e.message : 'Could not remove member'); }
-  };
-
-  return <AnimatePresence><div className="fixed inset-0 z-50 bg-black/70 p-3 md:p-8" onClick={onClose}>
-    <motion.div initial={{x:'100%'}} animate={{x:0}} exit={{x:'100%'}} onClick={e=>e.stopPropagation()} className="ml-auto flex h-full w-full max-w-2xl flex-col glass-strong rounded-3xl overflow-hidden">
-      <div className="flex items-center justify-between border-b border-white/5 p-5"><div><div className="text-[10px] uppercase tracking-[.2em] text-pulse-300">Workspace</div><h2 className="font-display text-2xl font-semibold">Team & members</h2><p className="mt-1 text-xs text-ink-500">Manage who can access this PULSE workspace.</p></div><button className="icon-btn" onClick={onClose}><X/></button></div>
-      <div className="flex-1 overflow-y-auto p-5">
-        <form onSubmit={invite} className="rounded-2xl border border-pulse-500/20 bg-pulse-500/5 p-4"><div className="flex items-center gap-2"><Users className="h-4 w-4 text-pulse-300"/><b className="text-sm">Invite a teammate</b></div><div className="mt-3 flex flex-col gap-2 sm:flex-row"><input required type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="teammate@email.com" className="field flex-1"/><select value={role} onChange={e=>setRole(e.target.value as WorkspaceRole)} className="field sm:w-32"><option value="member">Member</option><option value="admin">Admin</option></select><button disabled={busy} className="primary-btn justify-center disabled:opacity-40">{busy?'Adding…':'Invite'}</button></div></form>
-        {error && <p className="mt-3 text-sm text-ember-400">{error}</p>}{notice && <p className="mt-3 text-sm text-flux-400">{notice}</p>}
-        <div className="mt-6 flex items-center justify-between"><h3 className="font-semibold">Members <span className="text-xs text-ink-500">{members.length}</span></h3><span className="text-[10px] uppercase tracking-widest text-ink-500">Live workspace access</span></div>
-        <div className="mt-3 space-y-2">{members.map(m=><div key={m.userId} className="flex items-center gap-3 rounded-2xl border border-white/5 bg-white/[.02] p-3"><div className="avatar">{m.name.slice(0,1).toUpperCase()}</div><div className="min-w-0 flex-1"><b className="block truncate text-sm">{m.name}</b><span className="block truncate text-xs text-ink-500">{m.email}</span></div>{m.role==='owner' ? <span className="badge text-pulse-300 border-pulse-500/20 bg-pulse-500/10">Owner</span> : <><select value={m.role} onChange={e=>changeRole(m,e.target.value as WorkspaceRole)} className="field w-24 py-2 text-xs"><option value="member">Member</option><option value="admin">Admin</option></select><button onClick={()=>remove(m)} className="icon-btn text-ember-300"><X/></button></>}</div>)}</div>
-        {invites.length>0 && <><h3 className="mt-7 font-semibold">Pending invitations</h3><div className="mt-3 space-y-2">{invites.filter(i=>i.status==='pending').map(i=><div key={i.id} className="flex items-center gap-3 rounded-2xl border border-white/5 p-3"><div className="h-8 w-8 rounded-xl bg-alert-500/10 grid place-items-center"><MailIcon/></div><span className="flex-1 truncate text-sm">{i.email}</span><span className="badge text-alert-300 border-alert-500/20 bg-alert-500/10">{i.role}</span></div>)}</div></>}
-      </div>
-    </motion.div></div></AnimatePresence>;
-}
-
-function MailIcon(){ return <span className="text-alert-300 text-xs">@</span>; }
 
 function DiscussionDrawer({ topic, onClose, onSend, busy, message, setMessage, intent, setIntent }: {
   topic: TopicNode; onClose: () => void; onSend: (e: FormEvent) => void;
@@ -167,21 +84,30 @@ function DiscussionDrawer({ topic, onClose, onSend, busy, message, setMessage, i
   );
 }
 
+const bottomNavItems: { id: AppView; icon: typeof Home }[] = [
+  { id: 'dashboard', icon: Home },
+  { id: 'discussions', icon: MessageCircle },
+  { id: 'decisions', icon: LayoutGrid },
+  { id: 'pulse-ai', icon: Sparkles },
+];
+
 function AppShell() {
-  const { user, signOut } = useAuth();
+  const { user } = useAuth();
   const [workspace, setWorkspace] = useState<{ id: string; name: string; memberCount: number } | null>(null);
   const [topics, setTopics] = useState<TopicNode[]>(demoTopics);
   const [polls, setPolls] = useState<ActivePoll[]>(demoPolls);
   const [decisions, setDecisions] = useState<DecisionSummary[]>(demoDecisionSummaries());
   const [members, setMembers] = useState<WorkspaceMember[]>([]);
+  const [pendingInviteCount, setPendingInviteCount] = useState(0);
   const [dashboard, setDashboard] = useState<DashboardData>({ waitingForYou: [], decidedByYou: [], upcomingDeadlines: [], teamActivity: [] });
 
-  const [view, setView] = useState<HomeView>('home');
+  const [view, setView] = useState<AppView>('dashboard');
   const [navOpen, setNavOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
-  const [query, setQuery] = useState('');
   const [showTeam, setShowTeam] = useState(false);
   const [showNewDecision, setShowNewDecision] = useState(false);
+  const [showShortcuts, setShowShortcuts] = useState(false);
   const [activeDecisionId, setActiveDecisionId] = useState<string | null>(null);
   const [selectedTopic, setSelectedTopic] = useState<TopicNode | null>(null);
   const [message, setMessage] = useState('');
@@ -191,9 +117,10 @@ function AppShell() {
   const [notice, setNotice] = useState('');
 
   const refreshWorkspaceData = useCallback(async (workspaceId: string) => {
-    const [wsData, decisionRows] = await Promise.all([loadWorkspaceData(workspaceId), listDecisions(workspaceId)]);
+    const [wsData, decisionRows, invites] = await Promise.all([loadWorkspaceData(workspaceId), listDecisions(workspaceId), listWorkspaceInvites(workspaceId)]);
     if (wsData) { setTopics(wsData.topics); setPolls(wsData.polls); }
     setDecisions(decisionRows);
+    setPendingInviteCount(invites.filter((i) => i.status === 'pending').length);
     if (user) setDashboard(await loadDashboardData(workspaceId, user.id));
   }, [user]);
 
@@ -215,19 +142,39 @@ function AppShell() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, () => refreshWorkspaceData(workspace.id))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'decisions' }, () => refreshWorkspaceData(workspace.id))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'decision_history' }, () => refreshWorkspaceData(workspace.id))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'polls' }, () => refreshWorkspaceData(workspace.id))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'poll_votes' }, () => refreshWorkspaceData(workspace.id))
       .subscribe();
     return () => { client.removeChannel(channel); };
   }, [workspace, refreshWorkspaceData]);
-
-  const filteredTopics = useMemo(
-    () => topics.filter((t) => `${t.title} ${t.summary} ${t.tags.join(' ')}`.toLowerCase().includes(query.toLowerCase())),
-    [topics, query]
-  );
 
   const openDecision = (id: string) => {
     if (!isSupabaseConfigured) { setNotice('Connect Supabase to open the full Decision Room — this is demo data.'); return; }
     setActiveDecisionId(id);
   };
+
+  // Real, working keyboard shortcuts: N = new decision, ? = shortcuts panel, Esc = close top overlay.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      const typing = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable;
+      if (e.key === 'Escape') {
+        if (showShortcuts) setShowShortcuts(false);
+        else if (activeDecisionId) setActiveDecisionId(null);
+        else if (showNewDecision) setShowNewDecision(false);
+        else if (showTeam) setShowTeam(false);
+        else if (selectedTopic) setSelectedTopic(null);
+        else if (navOpen) setNavOpen(false);
+        return;
+      }
+      if (typing) return;
+      if (e.key === 'n' || e.key === 'N') setShowNewDecision(true);
+      if (e.key === '?') setShowShortcuts((v) => !v);
+      if (e.key === '/') { e.preventDefault(); setView('discussions'); }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [showShortcuts, activeDecisionId, showNewDecision, showTeam, selectedTopic, navOpen]);
 
   const submitTopicMessage = async (e: FormEvent) => {
     e.preventDefault(); if (!message.trim() || !selectedTopic || !user || !workspace) return;
@@ -241,79 +188,98 @@ function AppShell() {
     if (!workspace || !user) { setNotice('Connect Supabase and sign in to send real messages — this is demo data.'); return; }
     const target = topics[0];
     if (!target) return;
-    try {
-      await sendMessage(target.id, user.id, text, 'standard');
-      await refreshWorkspaceData(workspace.id);
-    } catch (e) { setError(e instanceof Error ? e.message : 'Could not send message'); }
+    try { await sendMessage(target.id, user.id, text, 'standard'); await refreshWorkspaceData(workspace.id); }
+    catch (e) { setError(e instanceof Error ? e.message : 'Could not send message'); }
   };
 
+  const badges = { actions: 0, risks: 0, notifications: dashboard.teamActivity.length, invitations: pendingInviteCount };
+  const isAdmin = members.some((m) => m.userId === user?.id && (m.role === 'owner' || m.role === 'admin'));
+  const workspaceRole = members.find((m) => m.userId === user?.id)?.role ?? 'member';
+  const greetingName = (user?.user_metadata?.full_name as string | undefined)?.split(' ')[0] ?? 'there';
+
   return (
-    <div className="relative min-h-screen overflow-x-hidden pb-24 text-ink-50">
-      <div className="mx-auto max-w-md">
-        <HomeHeader
-          memberCount={workspace?.memberCount ?? 128}
-          isLive={Boolean(workspace)}
-          activity={dashboard.teamActivity}
-          searchOpen={searchOpen}
-          onToggleSearch={() => setSearchOpen((v) => !v)}
-          onOpenNav={() => setNavOpen(true)}
-        />
+    <div className="flex min-h-screen text-ink-50">
+      <Sidebar
+        view={view}
+        onNavigate={setView}
+        workspaceName={workspace?.name ?? 'Demo workspace'}
+        workspaceRole={workspaceRole}
+        badges={badges}
+        collapsed={sidebarCollapsed}
+        onToggleCollapsed={() => setSidebarCollapsed((v) => !v)}
+        onOpenShortcuts={() => setShowShortcuts(true)}
+      />
 
-        {error && <div className="mx-4 mb-3 rounded-xl border border-ember-500/30 bg-ember-500/10 p-3 text-xs text-ember-300">{error}</div>}
-        {notice && <div className="mx-4 mb-3 rounded-xl border border-alert-500/30 bg-alert-500/10 p-3 text-xs text-alert-300">{notice}</div>}
-        {!workspace && isSupabaseConfigured && (
-          <div className="mx-4 mb-3 rounded-xl border border-alert-500/30 bg-alert-500/10 p-4 text-sm text-alert-300">
-            Your account is authenticated, but it has no workspace yet.
-          </div>
-        )}
+      <div className="relative min-h-screen flex-1 overflow-x-hidden pb-24 lg:pb-8">
+        <div className="lg:hidden">
+          <HomeHeader
+            memberCount={workspace?.memberCount ?? 128}
+            isLive={Boolean(workspace)}
+            activity={dashboard.teamActivity}
+            searchOpen={searchOpen}
+            onToggleSearch={() => setSearchOpen((v) => !v)}
+            onOpenNav={() => setNavOpen(true)}
+          />
+        </div>
 
-        {view === 'home' && (
-          <>
-            <LivingStateLedger
-              decisions={decisions}
-              polls={polls}
-              resources={demoResources}
-              onViewAllDecisions={() => setView('decisions')}
-              onVoteNow={() => setSelectedTopic(topics[0] ?? null)}
-              onOpenResourceHub={() => setView('dashboard')}
-            />
-            <DiscussionsList
-              topics={filteredTopics}
-              decisions={decisions}
-              searchOpen={searchOpen}
-              query={query}
-              onQueryChange={setQuery}
-              onCloseSearch={() => { setSearchOpen(false); setQuery(''); }}
-              onSelectTopic={setSelectedTopic}
-            />
-          </>
-        )}
-
-        {view === 'decisions' && (
-          <DecisionsListView decisions={decisions} onOpen={openDecision} onNew={() => setShowNewDecision(true)} />
-        )}
+        <div className="mx-auto max-w-2xl px-4 lg:hidden">
+          {error && <div className="mb-3 rounded-xl border border-ember-500/30 bg-ember-500/10 p-3 text-xs text-ember-300">{error}</div>}
+          {notice && <div className="mb-3 rounded-xl border border-alert-500/30 bg-alert-500/10 p-3 text-xs text-alert-300">{notice}</div>}
+          {!workspace && isSupabaseConfigured && (
+            <div className="mb-3 rounded-xl border border-alert-500/30 bg-alert-500/10 p-4 text-sm text-alert-300">Your account is authenticated, but it has no workspace yet.</div>
+          )}
+        </div>
+        <div className="mx-auto hidden max-w-2xl px-4 pt-5 lg:block">
+          {error && <div className="mb-3 rounded-xl border border-ember-500/30 bg-ember-500/10 p-3 text-xs text-ember-300">{error}</div>}
+          {notice && <div className="mb-3 rounded-xl border border-alert-500/30 bg-alert-500/10 p-3 text-xs text-alert-300">{notice}</div>}
+        </div>
 
         {view === 'dashboard' && (
-          <DashboardView data={dashboard} onOpenDecision={openDecision} />
+          <DashboardView
+            greetingName={greetingName}
+            topics={topics}
+            polls={polls}
+            decisions={decisions}
+            resources={demoResources}
+            data={dashboard}
+            onOpenDecision={openDecision}
+            onViewAllDecisions={() => setView('decisions')}
+            onVoteNow={() => setView('polls')}
+            onOpenResourceHub={() => setView('resources')}
+          />
         )}
+        {view === 'discussions' && <DiscussionsView topics={topics} decisions={decisions} onSelectTopic={setSelectedTopic} />}
+        {view === 'decisions' && <DecisionsListView decisions={decisions} onOpen={openDecision} onNew={() => setShowNewDecision(true)} />}
+        {view === 'polls' && workspace && <PollsView workspaceId={workspace.id} polls={polls} onRefresh={() => refreshWorkspaceData(workspace.id)} />}
+        {view === 'polls' && !workspace && <ComingSoonView icon={Sparkles} phase="Connect Supabase" title="Polls need a workspace" description="Sign in and create a workspace to create and vote on real polls." />}
+        {view === 'resources' && workspace && <ResourcesView workspaceId={workspace.id} />}
+        {view === 'resources' && !workspace && <ComingSoonView icon={FolderOpen} phase="Connect Supabase" title="Resources need a workspace" description="Sign in and create a workspace to store real resources." />}
+        {view === 'actions' && <ComingSoonView icon={CheckSquare} phase="Phase 3 — Knowledge" title="Actions" description="When a decision is made, PULSE will turn it into owned, deadlined tasks — Resources → Search → Decision history → Actions." />}
+        {view === 'pulse-ai' && <ComingSoonView icon={Sparkles} phase="Phase 4 — AI" title="PULSE AI" description="A workspace-aware assistant, connected securely through the backend — never by exposing an AI key in the browser." examples={['What decisions are currently stuck?', 'What are our biggest disagreements?', 'Summarize this week\'s discussions.', 'Why did we reject the previous supplier?']} />}
+        {view === 'risks' && <ComingSoonView icon={ShieldAlert} phase="Phase 4 — AI" title="Risk Center" description="Automatic detection of stalled discussions, team disagreements, and decisions missing evidence." />}
+        {view === 'analytics' && <ComingSoonView icon={PieChart} phase="Phase 5 — Business" title="Analytics" description="Decision health, average decision time, team participation, and department activity — for managers and executives." />}
+        {view === 'team' && workspace && <TeamView workspaceId={workspace.id} />}
+        {view === 'notifications' && <NotificationsView activity={dashboard.teamActivity} />}
+        {view === 'invitations' && workspace && <InvitationsView workspaceId={workspace.id} />}
+        {view === 'settings' && <SettingsView workspaceName={workspace?.name ?? 'Demo workspace'} workspaceRole={workspaceRole} />}
+        {view === 'help' && <HelpView onOpenShortcuts={() => setShowShortcuts(true)} />}
+
+        {view === 'discussions' && <MessageComposer onSend={handleComposerSend} onPlus={() => setShowNewDecision(true)} />}
       </div>
 
-      {view === 'home' && <MessageComposer onSend={handleComposerSend} onPlus={() => setShowNewDecision(true)} />}
-
-      <nav className="fixed bottom-3 left-1/2 z-40 flex -translate-x-1/2 gap-1 rounded-2xl glass-strong p-1.5 shadow-card">
-        <button onClick={() => setView('home')} className={`nav-btn ${view==='home'?'active':''}`}><Activity/></button>
-        <button onClick={() => setView('decisions')} className={`nav-btn ${view==='decisions'?'active':''}`}><Vote/></button>
-        <button onClick={() => setView('dashboard')} className={`nav-btn ${view==='dashboard'?'active':''}`}><FolderOpen/></button>
-        <button onClick={signOut} className="nav-btn"><Bot/></button>
+      <nav className="fixed bottom-3 left-1/2 z-40 flex -translate-x-1/2 gap-1 rounded-2xl glass-strong p-1.5 shadow-card lg:hidden">
+        {bottomNavItems.map(({ id, icon: Icon }) => (
+          <button key={id} onClick={() => setView(id)} className={`nav-btn ${view === id ? 'active' : ''}`}><Icon /></button>
+        ))}
       </nav>
 
       <NavDrawer
         open={navOpen}
         view={view}
         workspaceName={workspace?.name ?? 'Demo workspace'}
+        badges={badges}
         onClose={() => setNavOpen(false)}
         onNavigate={setView}
-        onOpenTeam={() => setShowTeam(true)}
       />
 
       <AnimatePresence>
@@ -347,12 +313,13 @@ function AppShell() {
         <DecisionRoom
           decisionId={activeDecisionId}
           members={members}
-          isAdmin={members.some((m) => m.userId === user?.id && (m.role === 'owner' || m.role === 'admin'))}
+          isAdmin={isAdmin}
           onClose={() => { setActiveDecisionId(null); if (workspace) refreshWorkspaceData(workspace.id); }}
         />
       )}
 
       {showTeam && workspace && <TeamPanel workspaceId={workspace.id} onClose={() => setShowTeam(false)} />}
+      <KeyboardShortcutsModal open={showShortcuts} onClose={() => setShowShortcuts(false)} />
     </div>
   );
 }

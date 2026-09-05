@@ -1,12 +1,40 @@
-import { Calendar, CheckCircle2, Clock3, Users } from 'lucide-react';
+import { Calendar, CheckCircle2, Clock3, FolderOpen, MessageCircle, Users, Vote } from 'lucide-react';
+import type { ReactNode } from 'react';
+import type { ActivePoll, DecisionSummary, TopicNode } from '@/types';
 import type { DashboardData } from '@/lib/pulseApi';
+import { LivingStateLedger } from '@/components/home/LivingStateLedger';
 
 interface DashboardViewProps {
+  greetingName: string;
+  topics: TopicNode[];
+  polls: ActivePoll[];
+  decisions: DecisionSummary[];
+  resources: { name: string; icon: typeof FolderOpen }[];
   data: DashboardData;
   onOpenDecision: (id: string) => void;
+  onViewAllDecisions: () => void;
+  onVoteNow: () => void;
+  onOpenResourceHub: () => void;
 }
 
-function Section({ icon: Icon, title, count, children }: { icon: typeof Clock3; title: string; count: number; children: React.ReactNode }) {
+function timeGreeting(): string {
+  const hour = new Date().getHours();
+  if (hour < 12) return 'Good morning';
+  if (hour < 18) return 'Good afternoon';
+  return 'Good evening';
+}
+
+function SummaryCard({ icon: Icon, value, label }: { icon: typeof MessageCircle; value: number; label: string }) {
+  return (
+    <div className="glass rounded-2xl p-3.5">
+      <Icon className="h-4 w-4 text-pulse-300" />
+      <p className="mt-2 font-display text-xl font-bold">{value}</p>
+      <p className="text-[11px] text-ink-500">{label}</p>
+    </div>
+  );
+}
+
+function Section({ icon: Icon, title, count, children }: { icon: typeof Clock3; title: string; count: number; children: ReactNode }) {
   return (
     <section className="glass rounded-2xl p-4">
       <div className="flex items-center gap-2 text-sm font-semibold">
@@ -18,13 +46,31 @@ function Section({ icon: Icon, title, count, children }: { icon: typeof Clock3; 
   );
 }
 
-export function DashboardView({ data, onOpenDecision }: DashboardViewProps) {
+export function DashboardView({ greetingName, topics, polls, decisions, resources, data, onOpenDecision, onViewAllDecisions, onVoteNow, onOpenResourceHub }: DashboardViewProps) {
+  const pendingDecisions = decisions.filter((d) => !d.outcome).length;
+
   return (
     <div className="mx-auto max-w-2xl space-y-4 px-4 pb-28 pt-5">
       <div>
-        <p className="text-xs uppercase tracking-[.2em] text-pulse-300">Overview</p>
-        <h1 className="mt-1 font-display text-2xl font-semibold">Dashboard</h1>
+        <h1 className="font-display text-2xl font-semibold">{timeGreeting()}, {greetingName}</h1>
+        <p className="mt-1 text-sm text-ink-400">Here's what's happening across your workspace.</p>
       </div>
+
+      <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+        <SummaryCard icon={MessageCircle} value={topics.length} label="Active Discussions" />
+        <SummaryCard icon={Vote} value={pendingDecisions} label="Decisions Pending" />
+        <SummaryCard icon={Users} value={polls.length} label="Polls Running" />
+        <SummaryCard icon={CheckCircle2} value={data.upcomingDeadlines.length} label="Deadlines Ahead" />
+      </div>
+
+      <LivingStateLedger
+        decisions={decisions}
+        polls={polls}
+        resources={resources}
+        onViewAllDecisions={onViewAllDecisions}
+        onVoteNow={onVoteNow}
+        onOpenResourceHub={onOpenResourceHub}
+      />
 
       <Section icon={Clock3} title="Decisions waiting for you" count={data.waitingForYou.length}>
         {data.waitingForYou.map((d) => (

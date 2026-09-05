@@ -82,15 +82,60 @@ export async function loadWorkspaceData(workspaceId?: string) {
     timestamp: new Date(row.updated_at).toLocaleDateString(),
   }));
 
-  const mappedPolls: ActivePoll[] = (polls.data ?? []).map((row) => ({
-    id: row.id,
-    question: row.question,
-    totalVotes: 0,
-    timeLeft: row.closes_at ? new Date(row.closes_at).toLocaleDateString() : 'Open',
-    options: [],
-  }));
+  const pollRows = polls.data ?? [];
+  const mappedPolls = await hydratePolls(pollRows);
 
   return { topics: mappedTopics, decisions: mappedDecisions, polls: mappedPolls };
+}
+
+/** Attaches real options + live vote counts to a set of poll rows. Fixes the old bug where options were always []. */
+async function hydratePolls(pollRows: { id: string; question: string; closes_at: string | null }[]): Promise<ActivePoll[]> {
+  if (!supabase || pollRows.length === 0) return [];
+  const pollIds = pollRows.map((p) => p.id);
+  const [optionsRes, votesRes] = await Promise.all([
+    supabase.from('poll_options').select('id,poll_id,label,position').in('poll_id', pollIds).order('position', { ascending: true }),
+    supabase.from('poll_votes').select('poll_id,option_id').in('poll_id', pollIds),
+  ]);
+  if (optionsRes.error) throw new Error(optionsRes.error.message);
+  if (votesRes.error) throw new Error(votesRes.error.message);
+
+  return pollRows.map((poll) => {
+    const options = (optionsRes.data ?? []).filter((o) => o.poll_id === poll.id);
+    const votesForPoll = (votesRes.data ?? []).filter((v) => v.poll_id === poll.id);
+    return {
+      id: poll.id,
+      question: poll.question,
+      totalVotes: votesForPoll.length,
+      timeLeft: poll.closes_at ? new Date(poll.closes_at).toLocaleDateString() : 'Open',
+      options: options.map((o) => ({ id: o.id, label: o.label, votes: votesForPoll.filter((v) => v.option_id === o.id).length })),
+    };
+  });
+}
+
+export async function listPolls(workspaceId: string): Promise<ActivePoll[]> {
+  if (!supabase) return [];
+  const { data, error } = await supabase.from('polls').select('id,question,closes_at,created_at').eq('workspace_id', workspaceId).order('created_at', { ascending: false });
+  if (error) throw new Error(error.message);
+  return hydratePolls(data ?? []);
+}
+
+export async function createPoll(workspaceId: string, question: string, optionLabels: string[], closesAt?: string | null) {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const { error } = await supabase.rpc('create_poll', { p_workspace_id: workspaceId, p_question: question, p_option_labels: optionLabels, p_closes_at: closesAt ?? null });
+  if (error) throw new Error(error.message);
+}
+
+export async function castPollVote(pollId: string, optionId: string) {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const { error } = await supabase.rpc('cast_poll_vote', { p_poll_id: pollId, p_option_id: optionId });
+  if (error) throw new Error(error.message);
+}
+
+export async function getMyPollVote(pollId: string, userId: string): Promise<string | null> {
+  if (!supabase) return null;
+  const { data, error } = await supabase.from('poll_votes').select('option_id').eq('poll_id', pollId).eq('user_id', userId).maybeSingle();
+  if (error) throw new Error(error.message);
+  return data?.option_id ?? null;
 }
 
 export async function createDiscussion(workspaceId: string, title: string, summary: string) {
@@ -185,6 +230,44 @@ export async function updateWorkspaceMemberRole(workspaceId: string, userId: str
 export async function removeWorkspaceMember(workspaceId: string, userId: string) {
   if (!supabase) throw new Error('Supabase is not configured.');
   const { error } = await supabase.from('workspace_members').delete().eq('workspace_id', workspaceId).eq('user_id', userId);
+  if (error) throw new Error(error.message);
+}
+
+export interface WorkspaceResource {
+  id: string;
+  name: string;
+  url: string | null;
+  decisionId: string | null;
+  decisionTitle: string | null;
+  createdAt: string;
+}
+
+export async function listWorkspaceResources(workspaceId: string): Promise<WorkspaceResource[]> {
+  if (!supabase) return [];
+  const { data, error } = await supabase
+    .from('resources')
+    .select('id,name,url,decision_id,created_at,decision:decision_id(title)')
+    .eq('workspace_id', workspaceId)
+    .order('created_at', { ascending: false });
+  if (error) throw new Error(error.message);
+  type ResourceRow = { id: string; name: string; url: string | null; decision_id: string | null; created_at: string; decision: { title: string } | { title: string }[] | null };
+  return (data ?? []).map((row) => {
+    const r = row as unknown as ResourceRow;
+    const decision = Array.isArray(r.decision) ? r.decision[0] : r.decision;
+    return {
+      id: r.id,
+      name: r.name,
+      url: r.url,
+      decisionId: r.decision_id,
+      decisionTitle: decision?.title ?? null,
+      createdAt: r.created_at,
+    };
+  });
+}
+
+export async function addWorkspaceResource(workspaceId: string, name: string, url: string, uploadedBy: string) {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const { error } = await supabase.from('resources').insert({ workspace_id: workspaceId, name, url, storage_path: url, uploaded_by: uploadedBy });
   if (error) throw new Error(error.message);
 }
 

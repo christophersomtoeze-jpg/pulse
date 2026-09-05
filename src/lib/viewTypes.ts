@@ -1,0 +1,15 @@
+export type AppView =
+  | 'dashboard'
+  | 'discussions'
+  | 'decisions'
+  | 'polls'
+  | 'actions'
+  | 'resources'
+  | 'pulse-ai'
+  | 'risks'
+  | 'analytics'
+  | 'team'
+  | 'notifications'
+  | 'invitations'
+  | 'settings'
+  | 'help';

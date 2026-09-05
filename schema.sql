@@ -344,7 +344,9 @@ alter table public.resources add column if not exists url text;
 create index if not exists resources_decision_idx on public.resources(decision_id);
 
 -- Voting: Yes / No / Need more information, optionally anonymous.
-create type public.decision_vote_choice as enum ('yes', 'no', 'needs_info');
+do $$ begin
+  create type public.decision_vote_choice as enum ('yes', 'no', 'needs_info');
+exception when duplicate_object then null; end $$;
 create table if not exists public.decision_votes (
   decision_id uuid not null references public.decisions(id) on delete cascade,
   user_id uuid not null references public.profiles(id) on delete cascade,
@@ -471,3 +473,66 @@ exception when duplicate_object then null; end $$;
 do $$ begin
   alter publication supabase_realtime add table public.decisions;
 exception when duplicate_object then null; end $$;
+
+-- ============================================================================
+-- PULSE Polls upgrade
+-- Atomic create + vote so the client never coordinates poll_options/poll_votes
+-- writes itself, and a tally view so vote percentages are never wrong again.
+-- ============================================================================
+create or replace function public.create_poll(p_workspace_id uuid, p_question text, p_option_labels text[], p_discussion_id uuid default null, p_closes_at timestamptz default null)
+returns public.polls language plpgsql security definer set search_path = public as $$
+declare result public.polls; i integer;
+begin
+  if auth.uid() is null then raise exception 'Not authenticated'; end if;
+  if not public.is_workspace_member(p_workspace_id) then raise exception 'Not a member of this workspace'; end if;
+  if array_length(p_option_labels, 1) is null or array_length(p_option_labels, 1) < 2 then raise exception 'A poll needs at least two options'; end if;
+
+  insert into public.polls (workspace_id, discussion_id, question, closes_at, created_by)
+  values (p_workspace_id, p_discussion_id, p_question, p_closes_at, auth.uid())
+  returning * into result;
+
+  for i in 1 .. array_length(p_option_labels, 1) loop
+    insert into public.poll_options (poll_id, label, position) values (result.id, p_option_labels[i], i);
+  end loop;
+
+  return result;
+end;
+$$;
+grant execute on function public.create_poll(uuid, text, text[], uuid, timestamptz) to authenticated;
+
+create or replace function public.cast_poll_vote(p_poll_id uuid, p_option_id uuid)
+returns public.poll_votes language plpgsql security definer set search_path = public as $$
+declare result public.poll_votes;
+begin
+  if auth.uid() is null then raise exception 'Not authenticated'; end if;
+  if not exists(select 1 from public.polls p where p.id = p_poll_id and public.is_workspace_member(p.workspace_id)) then
+    raise exception 'Not a member of this poll''s workspace';
+  end if;
+  if not exists(select 1 from public.poll_options o where o.id = p_option_id and o.poll_id = p_poll_id) then
+    raise exception 'That option does not belong to this poll';
+  end if;
+  insert into public.poll_votes (poll_id, option_id, user_id)
+  values (p_poll_id, p_option_id, auth.uid())
+  on conflict (poll_id, user_id) do update set option_id = excluded.option_id, created_at = now()
+  returning * into result;
+  return result;
+end;
+$$;
+grant execute on function public.cast_poll_vote(uuid, uuid) to authenticated;
+
+do $$ begin
+  alter publication supabase_realtime add table public.poll_votes;
+exception when duplicate_object then null; end $$;
+do $$ begin
+  alter publication supabase_realtime add table public.polls;
+exception when duplicate_object then null; end $$;
+
+-- ============================================================================
+-- Force PostgREST to reload its schema cache right now.
+-- This is exactly what fixes "Could not find a relationship... in the schema
+-- cache" errors — that error means PostgREST cached the table shape BEFORE
+-- the alter table/create table statements above ran. Supabase usually
+-- reloads automatically on DDL, but this makes it immediate and guaranteed
+-- instead of hoping the auto-reload already fired.
+-- ============================================================================
+notify pgrst, 'reload schema';

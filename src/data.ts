@@ -37,9 +37,9 @@ export const activePolls: ActivePoll[] = [
     totalVotes: 24,
     timeLeft: '3h left',
     options: [
-      { label: 'Cinematic product film', votes: 12 },
-      { label: 'Editorial photography', votes: 8 },
-      { label: 'Abstract motion graphics', votes: 4 },
+      { id: 'opt-cinematic', label: 'Cinematic product film', votes: 12 },
+      { id: 'opt-editorial', label: 'Editorial photography', votes: 8 },
+      { id: 'opt-abstract', label: 'Abstract motion graphics', votes: 4 },
     ],
   },
   {
@@ -48,8 +48,8 @@ export const activePolls: ActivePoll[] = [
     totalVotes: 18,
     timeLeft: '1d left',
     options: [
-      { label: 'Invite-only waitlist', votes: 11 },
-      { label: 'Open public beta', votes: 7 },
+      { id: 'opt-waitlist', label: 'Invite-only waitlist', votes: 11 },
+      { id: 'opt-public-beta', label: 'Open public beta', votes: 7 },
     ],
   },
 ];

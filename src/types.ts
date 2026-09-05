@@ -9,6 +9,7 @@ export interface PinnedDecision {
 }
 
 export interface PollOption {
+  id: string;
   label: string;
   votes: number;
 }

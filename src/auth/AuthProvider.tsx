@@ -2,6 +2,8 @@ import { createContext, useContext, useEffect, useMemo, useState, type ReactNode
 import type { Session, User } from '@supabase/supabase-js';
 import { isSupabaseConfigured, supabase } from '@/lib/supabase';
 
+export type OAuthProvider = 'google' | 'azure' | 'apple';
+
 interface AuthContextValue {
   session: Session | null;
   user: User | null;
@@ -9,6 +11,7 @@ interface AuthContextValue {
   configured: boolean;
   signIn: (email: string, password: string) => Promise<{ error: string | null; needsConfirmation?: boolean }>;
   signUp: (email: string, password: string, name: string) => Promise<{ error: string | null; needsConfirmation?: boolean }>;
+  signInWithOAuth: (provider: OAuthProvider) => Promise<{ error: string | null }>;
   signOut: () => Promise<void>;
 }
 
@@ -55,6 +58,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         options: { data: { full_name: name } },
       });
       return { error: error?.message ?? null, needsConfirmation: !data.session };
+    },
+    signInWithOAuth: async (provider) => {
+      if (!supabase) return { error: 'Supabase is not configured yet.' };
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider,
+        options: { redirectTo: window.location.origin },
+      });
+      return { error: error?.message ?? null };
     },
     signOut: async () => {
       if (supabase) await supabase.auth.signOut();
