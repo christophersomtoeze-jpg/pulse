@@ -1,15 +1,15 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { FolderOpen, Home, LayoutGrid, MessageCircle, Send, Sparkles, Users, X } from 'lucide-react';
+import { FolderOpen, Send, Sparkles, Users, X } from 'lucide-react';
 import { AuthProvider, useAuth } from '@/auth/AuthProvider';
 import { AuthScreen } from '@/components/auth/AuthScreen';
 import { TeamView } from '@/components/TeamPanel';
 import { Sidebar } from '@/components/layout/Sidebar';
 import { NavDrawer } from '@/components/home/NavDrawer';
 import { HomeHeader } from '@/components/home/HomeHeader';
+import { HomeFeed } from '@/components/home/HomeFeed';
 import { MessageComposer } from '@/components/home/MessageComposer';
 import { GlobalSearchModal } from '@/components/GlobalSearchModal';
-import { DiscussionsView } from '@/components/views/DiscussionsView';
 import { PollsView } from '@/components/views/PollsView';
 import { ResourcesView } from '@/components/views/ResourcesView';
 import { ActionsView } from '@/components/views/ActionsView';
@@ -24,7 +24,6 @@ import { InvitationsView } from '@/components/views/InvitationsView';
 import { SettingsView } from '@/components/views/SettingsView';
 import { HelpView } from '@/components/views/HelpView';
 import { ComingSoonView } from '@/components/views/ComingSoonView';
-import { DashboardView } from '@/components/DashboardView';
 import { DecisionsListView } from '@/components/decisions/DecisionsListView';
 import { NewDecisionModal } from '@/components/decisions/NewDecisionModal';
 import { DecisionRoom } from '@/components/decisions/DecisionRoom';
@@ -109,7 +108,7 @@ function DiscussionDrawer({ topic, onClose, onSend, busy, message, setMessage, i
         <div className="flex items-center justify-between border-b border-white/5 p-4"><div><div className="text-xs text-pulse-300">DISCUSSION</div><h2 className="font-display text-xl font-semibold">{topic.title}</h2></div><button className="icon-btn" onClick={onClose}><X/></button></div>
         <div className="flex-1 overflow-y-auto p-4">
           <p className="text-sm text-ink-300">{topic.summary}</p>
-          <div className="mt-5 space-y-4">{topic.messages.map(m=><div key={m.id} className="flex gap-3"><div className="avatar">{m.avatar}</div><div><div className="text-xs font-semibold">{m.author} <span className="ml-2 text-ink-500">{m.time}</span></div><p className="mt-1 text-sm text-ink-300">{m.text}</p><span className="mt-1 inline-block text-[10px] text-pulse-300">{intentLabels[m.intent]}</span></div></div>)}</div>
+          <div className="mt-5 space-y-4">{topic.messages.map(m=><div key={m.id} className="flex gap-3"><div className="avatar">{m.avatar}</div><div><div className="text-xs font-semibold">{m.author} <span className="ml-2 text-ink-500">{m.time}</span></div><p className="mt-1 text-sm text-ink-300">{m.text}</p>{m.attachmentType==='image' && m.attachmentUrl && <img src={m.attachmentUrl} alt="Attachment" className="mt-2 max-h-64 rounded-xl object-cover" />}{m.attachmentType==='audio' && m.attachmentUrl && <audio src={m.attachmentUrl} controls className="mt-2 h-9 w-full max-w-xs" />}<span className="mt-1 inline-block text-[10px] text-pulse-300">{intentLabels[m.intent]}</span></div></div>)}</div>
         </div>
         <form onSubmit={onSend} className="border-t border-white/5 p-3">
           <div className="mb-2 flex gap-2">{(['whisper','standard','pulse'] as IntentWave[]).map(x=><button type="button" key={x} onClick={()=>setIntent(x)} className={`rounded-lg border px-2 py-1 text-[10px] ${intent===x?'border-pulse-500/50 bg-pulse-500/10 text-pulse-300':'border-white/5 text-ink-500'}`}>{intentLabels[x]}</button>)}</div>
@@ -119,13 +118,6 @@ function DiscussionDrawer({ topic, onClose, onSend, busy, message, setMessage, i
     </div>
   );
 }
-
-const bottomNavItems: { id: AppView; icon: typeof Home }[] = [
-  { id: 'dashboard', icon: Home },
-  { id: 'discussions', icon: MessageCircle },
-  { id: 'decisions', icon: LayoutGrid },
-  { id: 'pulse-ai', icon: Sparkles },
-];
 
 function AppShell() {
   const { user } = useAuth();
@@ -248,18 +240,17 @@ function AppShell() {
     finally { setBusy(false); }
   };
 
-  const handleComposerSend = async (text: string) => {
+  const handleComposerSend = async (text: string, attachment?: { url: string; type: 'image' | 'audio' } | null) => {
     if (!workspace || !user) { setNotice('Connect Supabase and sign in to send real messages — this is demo data.'); return; }
     const target = topics[0];
     if (!target) return;
-    try { await sendMessage(target.id, user.id, text, 'standard'); await refreshWorkspaceData(workspace.id); }
+    try { await sendMessage(target.id, user.id, text, 'standard', attachment); await refreshWorkspaceData(workspace.id); }
     catch (e) { setError(e instanceof Error ? e.message : 'Could not send message'); }
   };
 
   const badges = { actions: myOpenActionCount, risks: riskCount, notifications: dashboard.teamActivity.length, invitations: pendingInviteCount };
   const isAdmin = members.some((m) => m.userId === user?.id && (m.role === 'owner' || m.role === 'admin'));
   const workspaceRole = members.find((m) => m.userId === user?.id)?.role ?? 'member';
-  const greetingName = (user?.user_metadata?.full_name as string | undefined)?.split(' ')[0] ?? 'there';
 
   return (
     <div className="flex min-h-screen text-ink-50">
@@ -302,21 +293,18 @@ function AppShell() {
           {notice && <div className="mb-3 rounded-xl border border-alert-500/30 bg-alert-500/10 p-3 text-xs text-alert-300">{notice}</div>}
         </div>
 
-        {view === 'dashboard' && (
-          <DashboardView
-            greetingName={greetingName}
+        {(view === 'dashboard' || view === 'discussions') && (
+          <HomeFeed
             topics={topics}
-            polls={polls}
             decisions={decisions}
+            polls={polls}
             resources={demoResources}
-            data={dashboard}
-            onOpenDecision={openDecision}
+            onSelectTopic={setSelectedTopic}
             onViewAllDecisions={() => setView('decisions')}
             onVoteNow={() => setView('polls')}
             onOpenResourceHub={() => setView('resources')}
           />
         )}
-        {view === 'discussions' && <DiscussionsView topics={topics} decisions={decisions} onSelectTopic={setSelectedTopic} />}
         {view === 'decisions' && workspace && <DecisionsListView workspaceId={workspace.id} decisions={decisions} onOpen={openDecision} onNew={() => setShowNewDecision(true)} />}
         {view === 'decisions' && !workspace && <DecisionsListView workspaceId="demo" decisions={decisions} onOpen={openDecision} onNew={() => setShowNewDecision(true)} />}
         {view === 'polls' && workspace && <PollsView workspaceId={workspace.id} polls={polls} onRefresh={() => refreshWorkspaceData(workspace.id)} />}
@@ -343,14 +331,8 @@ function AppShell() {
         {view === 'integrations' && !workspace && <ComingSoonView icon={Sparkles} phase="Connect Supabase" title="Integrations need a workspace" description="Connect Slack and the rest once you're signed into a real workspace." />}
         {view === 'help' && <HelpView onOpenShortcuts={() => setShowShortcuts(true)} />}
 
-        {view === 'discussions' && <MessageComposer onSend={handleComposerSend} onPlus={() => setShowNewDecision(true)} />}
+        {(view === 'dashboard' || view === 'discussions') && <MessageComposer onSend={handleComposerSend} />}
       </div>
-
-      <nav className="fixed bottom-3 left-1/2 z-40 flex -translate-x-1/2 gap-1 rounded-2xl glass-strong p-1.5 shadow-card lg:hidden">
-        {bottomNavItems.map(({ id, icon: Icon }) => (
-          <button key={id} onClick={() => setView(id)} className={`nav-btn ${view === id ? 'active' : ''}`}><Icon /></button>
-        ))}
-      </nav>
 
       <NavDrawer
         open={navOpen}

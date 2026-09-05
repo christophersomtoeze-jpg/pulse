@@ -742,3 +742,25 @@ create policy workspace_integrations_admin_all on public.workspace_integrations 
 -- (pgsodium) so tokens are encrypted at rest — see SUPABASE_SETUP.md.
 
 notify pgrst, 'reload schema';
+
+-- ============================================================================
+-- PULSE composer upgrade — image/voice attachments on messages
+-- ============================================================================
+alter table public.messages add column if not exists attachment_url text;
+alter table public.messages add column if not exists attachment_type text check (attachment_type in ('image', 'audio'));
+
+-- Storage bucket for uploaded images/voice notes. Inserting into
+-- storage.buckets genuinely creates it (public read, so uploaded media
+-- loads directly via URL) — no manual Dashboard step needed.
+insert into storage.buckets (id, name, public)
+values ('pulse-media', 'pulse-media', true)
+on conflict (id) do nothing;
+
+drop policy if exists pulse_media_read_public on storage.objects;
+create policy pulse_media_read_public on storage.objects for select using (bucket_id = 'pulse-media');
+drop policy if exists pulse_media_insert_authenticated on storage.objects;
+create policy pulse_media_insert_authenticated on storage.objects for insert to authenticated with check (bucket_id = 'pulse-media');
+drop policy if exists pulse_media_delete_own on storage.objects;
+create policy pulse_media_delete_own on storage.objects for delete to authenticated using (bucket_id = 'pulse-media' and owner = auth.uid());
+
+notify pgrst, 'reload schema';

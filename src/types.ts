@@ -38,6 +38,8 @@ export interface FeedMessage {
   text: string;
   time: string;
   intent: IntentWave;
+  attachmentUrl?: string | null;
+  attachmentType?: 'image' | 'audio' | null;
 }
 
 export interface TopicNode {

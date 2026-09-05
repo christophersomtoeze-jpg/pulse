@@ -46,7 +46,7 @@ export async function loadWorkspaceData(workspaceId?: string) {
   const topicRows = topics.data ?? [];
   const topicIds = topicRows.map((row) => row.id);
   const { data: messageRows, error: messageError } = topicIds.length
-    ? await supabase.from('messages').select('id,discussion_id,body,created_at,author_id,profiles:author_id(full_name,avatar_url)').in('discussion_id', topicIds).order('created_at', { ascending: true }).limit(100)
+    ? await supabase.from('messages').select('id,discussion_id,body,created_at,author_id,attachment_url,attachment_type,profiles:author_id(full_name,avatar_url)').in('discussion_id', topicIds).order('created_at', { ascending: true }).limit(100)
     : { data: [], error: null };
   if (messageError) throw new Error(messageError.message);
 
@@ -58,6 +58,8 @@ export async function loadWorkspaceData(workspaceId?: string) {
       text: message.body,
       time: new Date(message.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       intent: 'standard',
+      attachmentUrl: message.attachment_url ?? null,
+      attachmentType: (message.attachment_type as 'image' | 'audio' | null) ?? null,
     }));
 
     return {
@@ -148,11 +150,32 @@ export async function createDiscussion(workspaceId: string, title: string, summa
   return data;
 }
 
-export async function sendMessage(discussionId: string, authorId: string, body: string, intent: 'whisper' | 'standard' | 'pulse') {
+export async function sendMessage(
+  discussionId: string,
+  authorId: string,
+  body: string,
+  intent: 'whisper' | 'standard' | 'pulse',
+  attachment?: { url: string; type: 'image' | 'audio' } | null
+) {
   if (!supabase) throw new Error('Supabase is not configured.');
-  const { data, error } = await supabase.from('messages').insert({ discussion_id: discussionId, author_id: authorId, body, intent }).select('id,discussion_id,body,created_at,author_id').single();
+  const { data, error } = await supabase
+    .from('messages')
+    .insert({ discussion_id: discussionId, author_id: authorId, body, intent, attachment_url: attachment?.url ?? null, attachment_type: attachment?.type ?? null })
+    .select('id,discussion_id,body,created_at,author_id')
+    .single();
   if (error) throw new Error(error.message);
   return data;
+}
+
+/** Uploads an image or voice-note blob to the pulse-media bucket and returns its public URL. */
+export async function uploadMedia(file: Blob, kind: 'image' | 'audio', userId: string): Promise<string> {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const ext = kind === 'audio' ? 'webm' : (file as File).name?.split('.').pop() || 'jpg';
+  const path = `${userId}/${kind}-${Date.now()}.${ext}`;
+  const { error } = await supabase.storage.from('pulse-media').upload(path, file, { contentType: file.type || undefined });
+  if (error) throw new Error(error.message);
+  const { data } = supabase.storage.from('pulse-media').getPublicUrl(path);
+  return data.publicUrl;
 }
 
 export async function getCurrentWorkspace(userId: string): Promise<WorkspaceSummary | null> {
