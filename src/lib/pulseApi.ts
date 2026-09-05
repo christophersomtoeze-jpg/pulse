@@ -2,6 +2,9 @@ import type {
   ActivePoll, FeedMessage, PinnedDecision, TopicNode,
   DecisionAIAnalysis, DecisionComment, DecisionHistoryEntry,
   DecisionOutcome, DecisionResource, DecisionSummary, DecisionVoteTally, VoteChoice,
+  WorkspaceAction, ActionStatus, ActionPriority, GlobalSearchResults,
+  AssistantMessage, MeetingSummary, RiskItem, WorkspaceListItem, AuditLogEntry,
+  AnalyticsSnapshot, WorkspaceSubscription, WorkspaceIntegration, IntegrationProvider,
 } from '@/types';
 import { supabase } from '@/lib/supabase';
 
@@ -168,6 +171,15 @@ export async function getCurrentWorkspace(userId: string): Promise<WorkspaceSumm
   return { id: workspace.id, name: workspace.name, memberCount: count ?? 0 };
 }
 
+
+export async function getWorkspaceById(workspaceId: string): Promise<WorkspaceSummary | null> {
+  if (!supabase) return null;
+  const { data, error } = await supabase.from('workspaces').select('id,name').eq('id', workspaceId).maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!data) return null;
+  const { count } = await supabase.from('workspace_members').select('*', { count: 'exact', head: true }).eq('workspace_id', workspaceId);
+  return { id: data.id, name: data.name, memberCount: count ?? 0 };
+}
 
 export async function createWorkspace(userId: string, name: string) {
   if (!supabase) throw new Error('Supabase is not configured.');
@@ -571,4 +583,411 @@ export async function loadDashboardData(workspaceId: string, userId: string): Pr
     });
 
   return { waitingForYou, decidedByYou, upcomingDeadlines, teamActivity };
+}
+
+// ============================================================================
+// Phase 5: Multi-workspace
+// ============================================================================
+
+export async function listMyWorkspaces(userId: string): Promise<WorkspaceListItem[]> {
+  if (!supabase) return [];
+  const { data, error } = await supabase.from('workspace_members').select('role,workspace:workspace_id(id,name)').eq('user_id', userId);
+  if (error) throw new Error(error.message);
+  type Row = { role: string; workspace: { id: string; name: string } | { id: string; name: string }[] | null };
+  return ((data ?? []) as unknown as Row[])
+    .map((row) => {
+      const ws = Array.isArray(row.workspace) ? row.workspace[0] : row.workspace;
+      return ws ? { id: ws.id, name: ws.name, role: row.role } : null;
+    })
+    .filter((w): w is WorkspaceListItem => w !== null);
+}
+
+// ============================================================================
+// Phase 3: Actions / Tasks
+// ============================================================================
+
+type ActionRow = {
+  id: string; workspace_id: string; decision_id: string | null; title: string; description: string | null;
+  owner_id: string | null; deadline: string | null; status: ActionStatus; priority: ActionPriority; created_at: string;
+  owner: { full_name: string } | { full_name: string }[] | null;
+  decision: { title: string } | { title: string }[] | null;
+};
+
+function mapActionRow(row: ActionRow): WorkspaceAction {
+  const owner = Array.isArray(row.owner) ? row.owner[0] : row.owner;
+  const decision = Array.isArray(row.decision) ? row.decision[0] : row.decision;
+  return {
+    id: row.id,
+    workspaceId: row.workspace_id,
+    decisionId: row.decision_id,
+    decisionTitle: decision?.title ?? null,
+    title: row.title,
+    description: row.description ?? '',
+    ownerId: row.owner_id,
+    ownerName: owner?.full_name ?? null,
+    deadline: row.deadline,
+    status: row.status,
+    priority: row.priority,
+    createdAt: row.created_at,
+  };
+}
+
+const ACTION_SELECT = 'id,workspace_id,decision_id,title,description,owner_id,deadline,status,priority,created_at,owner:owner_id(full_name),decision:decision_id(title)';
+
+export async function listActions(workspaceId: string): Promise<WorkspaceAction[]> {
+  if (!supabase) return [];
+  const { data, error } = await supabase.from('actions').select(ACTION_SELECT).eq('workspace_id', workspaceId).order('created_at', { ascending: false });
+  if (error) throw new Error(error.message);
+  return (data ?? []).map((row) => mapActionRow(row as unknown as ActionRow));
+}
+
+export interface CreateActionInput {
+  title: string;
+  description?: string;
+  ownerId?: string | null;
+  deadline?: string | null;
+  priority?: ActionPriority;
+  decisionId?: string | null;
+}
+
+export async function createAction(workspaceId: string, input: CreateActionInput, createdBy: string): Promise<WorkspaceAction> {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const { data, error } = await supabase
+    .from('actions')
+    .insert({
+      workspace_id: workspaceId,
+      decision_id: input.decisionId ?? null,
+      title: input.title,
+      description: input.description ?? '',
+      owner_id: input.ownerId ?? null,
+      deadline: input.deadline ?? null,
+      priority: input.priority ?? 'medium',
+      created_by: createdBy,
+    })
+    .select(ACTION_SELECT)
+    .single();
+  if (error) throw new Error(error.message);
+  return mapActionRow(data as unknown as ActionRow);
+}
+
+export async function updateActionStatus(actionId: string, status: ActionStatus) {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const { error } = await supabase.from('actions').update({ status, updated_at: new Date().toISOString() }).eq('id', actionId);
+  if (error) throw new Error(error.message);
+}
+
+// ============================================================================
+// Phase 3: Global search + decision-history search
+// ============================================================================
+
+export async function globalSearch(workspaceId: string, query: string): Promise<GlobalSearchResults> {
+  const empty: GlobalSearchResults = { discussions: [], decisions: [], actions: [], resources: [], people: [] };
+  if (!supabase || !query.trim()) return empty;
+  const like = `%${query.trim()}%`;
+
+  const [discussions, decisions, actions, resources, people] = await Promise.all([
+    supabase.from('discussions').select('id,title,summary').eq('workspace_id', workspaceId).or(`title.ilike.${like},summary.ilike.${like}`).limit(8),
+    supabase.from('decisions').select('id,title,description').eq('workspace_id', workspaceId).or(`title.ilike.${like},description.ilike.${like}`).limit(8),
+    supabase.from('actions').select('id,title').eq('workspace_id', workspaceId).ilike('title', like).limit(8),
+    supabase.from('resources').select('id,name,url').eq('workspace_id', workspaceId).ilike('name', like).limit(8),
+    supabase.from('workspace_members').select('user_id,profiles:user_id(full_name,email:user_id)').eq('workspace_id', workspaceId).limit(50),
+  ]);
+
+  if (discussions.error) throw new Error(discussions.error.message);
+  if (decisions.error) throw new Error(decisions.error.message);
+  if (actions.error) throw new Error(actions.error.message);
+  if (resources.error) throw new Error(resources.error.message);
+
+  // People are matched client-side since profiles has no email column to filter by directly here.
+  const memberRows = people.error ? [] : (people.data ?? []);
+  type MemberRow = { user_id: string; profiles: { full_name: string } | { full_name: string }[] | null };
+  const q = query.trim().toLowerCase();
+  const matchedPeople = (memberRows as unknown as MemberRow[])
+    .map((row) => {
+      const profile = Array.isArray(row.profiles) ? row.profiles[0] : row.profiles;
+      return { id: row.user_id, name: profile?.full_name ?? 'PULSE Member', email: '' };
+    })
+    .filter((p) => p.name.toLowerCase().includes(q))
+    .slice(0, 8);
+
+  return {
+    discussions: (discussions.data ?? []).map((r) => ({ id: r.id, title: r.title, summary: r.summary ?? '' })),
+    decisions: (decisions.data ?? []).map((r) => ({ id: r.id, title: r.title, description: r.description ?? '' })),
+    actions: (actions.data ?? []).map((r) => ({ id: r.id, title: r.title })),
+    resources: (resources.data ?? []).map((r) => ({ id: r.id, name: r.name, url: r.url })),
+    people: matchedPeople,
+  };
+}
+
+export interface DecisionHistorySearchEntry extends DecisionHistoryEntry {
+  decisionId: string;
+  decisionTitle: string;
+}
+
+export async function searchDecisionHistory(workspaceId: string, query: string): Promise<DecisionHistorySearchEntry[]> {
+  if (!supabase) return [];
+  const { data, error } = await supabase
+    .from('decision_history')
+    .select('id,status,outcome,note,created_at,changed_by:changed_by(full_name),decision:decision_id(id,title,workspace_id)')
+    .order('created_at', { ascending: false })
+    .limit(200);
+  if (error) throw new Error(error.message);
+
+  type Row = {
+    id: string; status: string | null; outcome: string | null; note: string | null; created_at: string;
+    changed_by: { full_name: string } | { full_name: string }[] | null;
+    decision: { id: string; title: string; workspace_id: string } | { id: string; title: string; workspace_id: string }[] | null;
+  };
+  const q = query.trim().toLowerCase();
+  return ((data ?? []) as unknown as Row[])
+    .map((row) => {
+      const decision = Array.isArray(row.decision) ? row.decision[0] : row.decision;
+      const changedBy = Array.isArray(row.changed_by) ? row.changed_by[0] : row.changed_by;
+      if (!decision || decision.workspace_id !== workspaceId) return null;
+      return {
+        id: row.id,
+        status: row.status,
+        outcome: row.outcome,
+        note: row.note,
+        changedByName: changedBy?.full_name ?? null,
+        createdAt: row.created_at,
+        decisionId: decision.id,
+        decisionTitle: decision.title,
+      };
+    })
+    .filter((e): e is DecisionHistorySearchEntry => e !== null)
+    .filter((e) => !q || e.decisionTitle.toLowerCase().includes(q) || (e.note ?? '').toLowerCase().includes(q) || (e.outcome ?? '').toLowerCase().includes(q));
+}
+
+// ============================================================================
+// Phase 4: standalone PULSE AI assistant
+// ============================================================================
+
+export async function listAssistantMessages(workspaceId: string, userId: string): Promise<AssistantMessage[]> {
+  if (!supabase) return [];
+  const { data, error } = await supabase.from('assistant_messages').select('id,role,content,created_at').eq('workspace_id', workspaceId).eq('user_id', userId).order('created_at', { ascending: true }).limit(100);
+  if (error) throw new Error(error.message);
+  return (data ?? []).map((row) => ({ id: row.id, role: row.role as 'user' | 'assistant', content: row.content, createdAt: row.created_at }));
+}
+
+export async function sendAssistantMessage(workspaceId: string, content: string): Promise<AssistantMessage> {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const { data, error } = await supabase.functions.invoke('pulse-assistant', { body: { workspaceId, content } });
+  if (error) throw new Error(error.message);
+  return { id: data.id, role: 'assistant', content: data.content, createdAt: data.createdAt ?? new Date().toISOString() };
+}
+
+// ============================================================================
+// Phase 4: Meeting summaries
+// ============================================================================
+
+export async function listMeetingSummaries(workspaceId: string): Promise<MeetingSummary[]> {
+  if (!supabase) return [];
+  const { data, error } = await supabase.from('meeting_summaries').select('id,title,raw_notes,summary,key_points,action_items,created_at').eq('workspace_id', workspaceId).order('created_at', { ascending: false });
+  if (error) throw new Error(error.message);
+  return (data ?? []).map((row) => ({
+    id: row.id, title: row.title, rawNotes: row.raw_notes, summary: row.summary,
+    keyPoints: row.key_points, actionItems: row.action_items, createdAt: row.created_at,
+  }));
+}
+
+export async function createMeetingSummary(workspaceId: string, title: string, rawNotes: string): Promise<MeetingSummary> {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const { data, error } = await supabase.functions.invoke('meeting-summary', { body: { workspaceId, title, rawNotes } });
+  if (error) throw new Error(error.message);
+  return {
+    id: data.id, title: data.title ?? title, rawNotes, summary: data.summary,
+    keyPoints: data.keyPoints, actionItems: data.actionItems, createdAt: data.createdAt ?? new Date().toISOString(),
+  };
+}
+
+// ============================================================================
+// Phase 4: Risk Center — rule-based, computed from real data, never fabricated
+// ============================================================================
+
+export async function computeRisks(workspaceId: string): Promise<RiskItem[]> {
+  if (!supabase) return [];
+  const risks: RiskItem[] = [];
+  const STALE_DAYS = 4;
+  const now = Date.now();
+
+  const [discussionsRes, decisionsRes, tallyRes, actionsRes] = await Promise.all([
+    supabase.from('discussions').select('id,title,updated_at,status').eq('workspace_id', workspaceId),
+    supabase.from('decisions').select('id,title,created_at,outcome').eq('workspace_id', workspaceId).is('outcome', null),
+    supabase.from('decision_votes').select('decision_id,choice'),
+    supabase.from('actions').select('id,title,deadline,status').eq('workspace_id', workspaceId).neq('status', 'done'),
+  ]);
+  if (discussionsRes.error) throw new Error(discussionsRes.error.message);
+  if (decisionsRes.error) throw new Error(decisionsRes.error.message);
+  if (tallyRes.error) throw new Error(tallyRes.error.message);
+  if (actionsRes.error) throw new Error(actionsRes.error.message);
+
+  for (const d of discussionsRes.data ?? []) {
+    if (d.status === 'archived') continue;
+    const daysSince = (now - new Date(d.updated_at).getTime()) / 86400000;
+    if (daysSince >= STALE_DAYS) {
+      risks.push({
+        id: `stalled-${d.id}`, kind: 'stalled-discussion', severity: daysSince >= 8 ? 'high' : 'medium',
+        title: d.title, detail: `No activity for ${Math.floor(daysSince)} days.`, linkId: d.id,
+      });
+    }
+  }
+
+  const openDecisions = decisionsRes.data ?? [];
+  const votesByDecision = new Map<string, { yes: number; no: number }>();
+  for (const v of tallyRes.data ?? []) {
+    const entry = votesByDecision.get(v.decision_id) ?? { yes: 0, no: 0 };
+    if (v.choice === 'yes') entry.yes += 1;
+    else if (v.choice === 'no') entry.no += 1;
+    votesByDecision.set(v.decision_id, entry);
+  }
+  for (const d of openDecisions) {
+    const tally = votesByDecision.get(d.id);
+    if (!tally) continue;
+    const total = tally.yes + tally.no;
+    if (total >= 3 && Math.abs(tally.yes - tally.no) / total <= 0.2) {
+      risks.push({
+        id: `disagreement-${d.id}`, kind: 'disagreement', severity: 'high',
+        title: d.title, detail: `Split vote: ${tally.yes} yes vs ${tally.no} no.`, linkId: d.id,
+      });
+    }
+    const ageDays = (now - new Date(d.created_at).getTime()) / 86400000;
+    if (ageDays >= 7) {
+      risks.push({
+        id: `stuck-${d.id}`, kind: 'missing-evidence', severity: ageDays >= 14 ? 'high' : 'medium',
+        title: d.title, detail: `In review for ${Math.floor(ageDays)} days with no recorded outcome.`, linkId: d.id,
+      });
+    }
+  }
+
+  for (const a of actionsRes.data ?? []) {
+    if (!a.deadline) continue;
+    if (new Date(a.deadline).getTime() < now) {
+      risks.push({
+        id: `overdue-${a.id}`, kind: 'overdue-action', severity: 'medium',
+        title: a.title, detail: `Was due ${new Date(a.deadline).toLocaleDateString()}.`, linkId: a.id,
+      });
+    }
+  }
+
+  return risks.sort((a, b) => (a.severity === b.severity ? 0 : a.severity === 'high' ? -1 : 1));
+}
+
+// ============================================================================
+// Phase 5: Audit log
+// ============================================================================
+
+export async function listAuditLog(workspaceId: string): Promise<AuditLogEntry[]> {
+  if (!supabase) return [];
+  const { data, error } = await supabase.from('audit_log').select('id,action,detail,created_at,actor:actor_id(full_name)').eq('workspace_id', workspaceId).order('created_at', { ascending: false }).limit(100);
+  if (error) throw new Error(error.message);
+  type Row = { id: string; action: string; detail: string | null; created_at: string; actor: { full_name: string } | { full_name: string }[] | null };
+  return ((data ?? []) as unknown as Row[]).map((row) => {
+    const actor = Array.isArray(row.actor) ? row.actor[0] : row.actor;
+    return { id: row.id, action: row.action, detail: row.detail, actorName: actor?.full_name ?? null, createdAt: row.created_at };
+  });
+}
+
+// ============================================================================
+// Phase 5: Analytics — every number here is computed from real rows, never mocked
+// ============================================================================
+
+export async function computeAnalytics(workspaceId: string): Promise<AnalyticsSnapshot> {
+  const empty: AnalyticsSnapshot = { decisionsThisMonth: 0, avgDecisionDays: null, stuckDecisions: 0, completedDecisions: 0, participationPct: 0, overdueActions: 0, discussionActivity: [] };
+  if (!supabase) return empty;
+
+  const [decisionsRes, membersRes, votesRes, actionsRes, messagesRes] = await Promise.all([
+    supabase.from('decisions').select('id,created_at,decided_at,outcome').eq('workspace_id', workspaceId),
+    supabase.from('workspace_members').select('user_id').eq('workspace_id', workspaceId),
+    supabase.from('decision_votes').select('user_id,decision_id'),
+    supabase.from('actions').select('id,deadline,status').eq('workspace_id', workspaceId),
+    supabase.from('messages').select('id,created_at,discussion_id,discussions!inner(workspace_id)').eq('discussions.workspace_id', workspaceId).limit(500),
+  ]);
+  if (decisionsRes.error) throw new Error(decisionsRes.error.message);
+  if (membersRes.error) throw new Error(membersRes.error.message);
+  if (votesRes.error) throw new Error(votesRes.error.message);
+  if (actionsRes.error) throw new Error(actionsRes.error.message);
+
+  const decisions = decisionsRes.data ?? [];
+  const now = new Date();
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+  const decisionsThisMonth = decisions.filter((d) => new Date(d.created_at).getTime() >= monthStart).length;
+
+  const decidedOnes = decisions.filter((d) => d.decided_at);
+  const avgDecisionDays = decidedOnes.length
+    ? decidedOnes.reduce((sum, d) => sum + (new Date(d.decided_at!).getTime() - new Date(d.created_at).getTime()), 0) / decidedOnes.length / 86400000
+    : null;
+
+  const stuckDecisions = decisions.filter((d) => !d.outcome && (Date.now() - new Date(d.created_at).getTime()) / 86400000 >= 7).length;
+  const completedDecisions = decisions.filter((d) => d.outcome).length;
+
+  const memberIds = new Set((membersRes.data ?? []).map((m) => m.user_id));
+  const votedIds = new Set((votesRes.data ?? []).map((v) => v.user_id));
+  const participationPct = memberIds.size ? Math.round(([...memberIds].filter((id) => votedIds.has(id)).length / memberIds.size) * 100) : 0;
+
+  const overdueActions = (actionsRes.data ?? []).filter((a) => a.status !== 'done' && a.deadline && new Date(a.deadline).getTime() < Date.now()).length;
+
+  const discussionActivity: { label: string; count: number }[] = [];
+  if (!messagesRes.error) {
+    const byDay = new Map<string, number>();
+    for (const m of messagesRes.data ?? []) {
+      const day = new Date(m.created_at).toLocaleDateString('en-US', { weekday: 'short' });
+      byDay.set(day, (byDay.get(day) ?? 0) + 1);
+    }
+    for (const [label, count] of byDay) discussionActivity.push({ label, count });
+  }
+
+  return { decisionsThisMonth, avgDecisionDays, stuckDecisions, completedDecisions, participationPct, overdueActions, discussionActivity };
+}
+
+// ============================================================================
+// Phase 5: Billing (scaffold — inert until a real Stripe account is connected)
+// ============================================================================
+
+export async function getWorkspaceSubscription(workspaceId: string): Promise<WorkspaceSubscription> {
+  if (!supabase) return { plan: 'free', status: 'active', currentPeriodEnd: null };
+  const { data, error } = await supabase.from('workspace_subscriptions').select('plan,status,current_period_end').eq('workspace_id', workspaceId).maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!data) return { plan: 'free', status: 'active', currentPeriodEnd: null };
+  return { plan: data.plan, status: data.status, currentPeriodEnd: data.current_period_end };
+}
+
+export async function startCheckout(workspaceId: string, plan: 'pro' | 'business'): Promise<{ url: string | null; error: string | null }> {
+  if (!supabase) return { url: null, error: 'Supabase is not configured.' };
+  const { data, error } = await supabase.functions.invoke('stripe-checkout', { body: { workspaceId, plan } });
+  if (error) return { url: null, error: error.message };
+  return { url: data?.url ?? null, error: data?.error ?? null };
+}
+
+// ============================================================================
+// Phase 6: Integrations
+// ============================================================================
+
+const ALL_PROVIDERS: IntegrationProvider[] = ['slack', 'teams', 'google', 'microsoft365', 'jira', 'notion'];
+
+export async function listWorkspaceIntegrations(workspaceId: string): Promise<WorkspaceIntegration[]> {
+  if (!supabase) return ALL_PROVIDERS.map((provider) => ({ provider, status: 'disconnected', connectedAt: null }));
+  const { data, error } = await supabase.from('workspace_integrations').select('provider,status,connected_at').eq('workspace_id', workspaceId);
+  if (error) throw new Error(error.message);
+  const byProvider = new Map((data ?? []).map((row) => [row.provider, row]));
+  return ALL_PROVIDERS.map((provider) => {
+    const row = byProvider.get(provider);
+    return { provider, status: (row?.status as 'connected' | 'disconnected') ?? 'disconnected', connectedAt: row?.connected_at ?? null };
+  });
+}
+
+/** Kicks off Slack's OAuth flow. Requires VITE_SLACK_CLIENT_ID to be set (see SUPABASE_SETUP.md). */
+export function connectSlack(workspaceId: string) {
+  const clientId = import.meta.env.VITE_SLACK_CLIENT_ID as string | undefined;
+  if (!clientId) throw new Error('Slack is not configured yet — VITE_SLACK_CLIENT_ID is missing.');
+  const redirectUri = `${window.location.origin}/integrations/slack/callback`;
+  const scopes = ['channels:read', 'chat:write', 'channels:history'].join(',');
+  const url = `https://slack.com/oauth/v2/authorize?client_id=${encodeURIComponent(clientId)}&scope=${encodeURIComponent(scopes)}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${encodeURIComponent(workspaceId)}`;
+  window.location.assign(url);
+}
+
+export async function disconnectIntegration(workspaceId: string, provider: IntegrationProvider) {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const { error } = await supabase.from('workspace_integrations').update({ status: 'disconnected', access_token: null }).eq('workspace_id', workspaceId).eq('provider', provider);
+  if (error) throw new Error(error.message);
 }

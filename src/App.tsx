@@ -1,16 +1,24 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { FolderOpen, Home, LayoutGrid, MessageCircle, Send, Sparkles, ShieldAlert, PieChart, CheckSquare, Users, X } from 'lucide-react';
+import { FolderOpen, Home, LayoutGrid, MessageCircle, Send, Sparkles, Users, X } from 'lucide-react';
 import { AuthProvider, useAuth } from '@/auth/AuthProvider';
 import { AuthScreen } from '@/components/auth/AuthScreen';
-import { TeamPanel, TeamView } from '@/components/TeamPanel';
+import { TeamView } from '@/components/TeamPanel';
 import { Sidebar } from '@/components/layout/Sidebar';
 import { NavDrawer } from '@/components/home/NavDrawer';
 import { HomeHeader } from '@/components/home/HomeHeader';
 import { MessageComposer } from '@/components/home/MessageComposer';
+import { GlobalSearchModal } from '@/components/GlobalSearchModal';
 import { DiscussionsView } from '@/components/views/DiscussionsView';
 import { PollsView } from '@/components/views/PollsView';
 import { ResourcesView } from '@/components/views/ResourcesView';
+import { ActionsView } from '@/components/views/ActionsView';
+import { PulseAIView } from '@/components/views/PulseAIView';
+import { RiskCenterView } from '@/components/views/RiskCenterView';
+import { MeetingSummariesView } from '@/components/views/MeetingSummariesView';
+import { AnalyticsView } from '@/components/views/AnalyticsView';
+import { AuditLogView } from '@/components/views/AuditLogView';
+import { IntegrationsView } from '@/components/views/IntegrationsView';
 import { NotificationsView } from '@/components/views/NotificationsView';
 import { InvitationsView } from '@/components/views/InvitationsView';
 import { SettingsView } from '@/components/views/SettingsView';
@@ -24,13 +32,14 @@ import { KeyboardShortcutsModal } from '@/components/KeyboardShortcutsModal';
 import type { AppView } from '@/lib/viewTypes';
 import { activePolls as demoPolls, topicNodes as demoTopics } from '@/data';
 import {
-  getCurrentWorkspace, loadWorkspaceData, sendMessage, createWorkspace,
+  getCurrentWorkspace, getWorkspaceById, loadWorkspaceData, sendMessage, createWorkspace,
   listWorkspaceMembers, listWorkspaceInvites, listDecisions, createDecision, loadDashboardData,
-  type WorkspaceMember, type DashboardData,
+  listMyWorkspaces, listActions, computeRisks, type WorkspaceMember, type DashboardData,
 } from '@/lib/pulseApi';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
-import type { ActivePoll, DecisionSummary, IntentWave, TopicNode } from '@/types';
+import type { ActivePoll, DecisionSummary, IntentWave, TopicNode, WorkspaceListItem } from '@/types';
 
+const ACTIVE_WORKSPACE_KEY = 'pulse:active-workspace-id';
 const intentLabels: Record<IntentWave, string> = { whisper: 'Whisper', standard: 'Standard', pulse: 'Pulse Alert' };
 
 const demoResources = [
@@ -60,6 +69,33 @@ function WorkspaceSetup({ onCreated }: { onCreated: () => void }) {
     finally { setBusy(false); }
   };
   return <div className="min-h-screen px-5 py-10 grid place-items-center"><form onSubmit={submit} className="w-full max-w-md glass-strong rounded-3xl p-6"><div className="h-11 w-11 rounded-2xl bg-gradient-to-br from-[#7c3aed] to-[#06b6d4] grid place-items-center shadow-glow"><Users className="text-white"/></div><h1 className="mt-5 font-display text-2xl font-semibold">Create your workspace</h1><p className="mt-2 text-sm text-ink-400">This is your company or team space. You can invite people after the foundation is connected.</p><input required value={name} onChange={e=>setName(e.target.value)} placeholder="Company or workspace name" className="field mt-6"/><p className="mt-2 text-xs text-ink-500">Example: Acme Product Team</p>{error && <p className="mt-3 text-sm text-ember-400">{error}</p>}<button disabled={busy} className="primary-btn mt-5 w-full justify-center disabled:opacity-40">{busy?'Creating…':'Create workspace'}</button></form></div>;
+}
+
+function NewWorkspaceModal({ open, onClose, onCreated }: { open: boolean; onClose: () => void; onCreated: (ws: { id: string; name: string }) => void }) {
+  const { user } = useAuth();
+  const [name, setName] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const submit = async (e: FormEvent) => {
+    e.preventDefault(); if (!user || !name.trim()) return; setBusy(true); setError('');
+    try { const ws = await createWorkspace(user.id, name.trim()); setName(''); onCreated(ws); }
+    catch (err) { setError(err instanceof Error ? err.message : 'Could not create workspace'); }
+    finally { setBusy(false); }
+  };
+  return (
+    <AnimatePresence>
+      {open && (
+        <div className="fixed inset-0 z-[70] grid place-items-center bg-black/60 p-4" onClick={onClose}>
+          <motion.form onSubmit={submit} onClick={(e) => e.stopPropagation()} initial={{ opacity: 0, scale: 0.96 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.96 }} className="glass-strong w-full max-w-sm rounded-2xl p-5">
+            <div className="flex items-center justify-between"><h2 className="font-display text-lg font-semibold">New workspace</h2><button type="button" className="icon-btn" onClick={onClose}><X className="h-4 w-4" /></button></div>
+            <input required value={name} onChange={(e) => setName(e.target.value)} placeholder="Workspace name" className="field mt-4" />
+            {error && <p className="mt-2 text-xs text-ember-400">{error}</p>}
+            <button disabled={busy || !name.trim()} className="primary-btn mt-4 w-full justify-center disabled:opacity-40">{busy ? 'Creating…' : 'Create workspace'}</button>
+          </motion.form>
+        </div>
+      )}
+    </AnimatePresence>
+  );
 }
 
 function DiscussionDrawer({ topic, onClose, onSend, busy, message, setMessage, intent, setIntent }: {
@@ -94,19 +130,22 @@ const bottomNavItems: { id: AppView; icon: typeof Home }[] = [
 function AppShell() {
   const { user } = useAuth();
   const [workspace, setWorkspace] = useState<{ id: string; name: string; memberCount: number } | null>(null);
+  const [workspaces, setWorkspaces] = useState<WorkspaceListItem[]>([]);
   const [topics, setTopics] = useState<TopicNode[]>(demoTopics);
   const [polls, setPolls] = useState<ActivePoll[]>(demoPolls);
   const [decisions, setDecisions] = useState<DecisionSummary[]>(demoDecisionSummaries());
   const [members, setMembers] = useState<WorkspaceMember[]>([]);
   const [pendingInviteCount, setPendingInviteCount] = useState(0);
+  const [myOpenActionCount, setMyOpenActionCount] = useState(0);
+  const [riskCount, setRiskCount] = useState(0);
   const [dashboard, setDashboard] = useState<DashboardData>({ waitingForYou: [], decidedByYou: [], upcomingDeadlines: [], teamActivity: [] });
 
   const [view, setView] = useState<AppView>('dashboard');
   const [navOpen, setNavOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [searchOpen, setSearchOpen] = useState(false);
-  const [showTeam, setShowTeam] = useState(false);
+  const [globalSearchOpen, setGlobalSearchOpen] = useState(false);
   const [showNewDecision, setShowNewDecision] = useState(false);
+  const [showNewWorkspace, setShowNewWorkspace] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [activeDecisionId, setActiveDecisionId] = useState<string | null>(null);
   const [selectedTopic, setSelectedTopic] = useState<TopicNode | null>(null);
@@ -117,23 +156,39 @@ function AppShell() {
   const [notice, setNotice] = useState('');
 
   const refreshWorkspaceData = useCallback(async (workspaceId: string) => {
-    const [wsData, decisionRows, invites] = await Promise.all([loadWorkspaceData(workspaceId), listDecisions(workspaceId), listWorkspaceInvites(workspaceId)]);
+    const [wsData, decisionRows, invites, myActions, risks] = await Promise.all([
+      loadWorkspaceData(workspaceId), listDecisions(workspaceId), listWorkspaceInvites(workspaceId),
+      user ? listActions(workspaceId) : Promise.resolve([]),
+      computeRisks(workspaceId),
+    ]);
     if (wsData) { setTopics(wsData.topics); setPolls(wsData.polls); }
     setDecisions(decisionRows);
     setPendingInviteCount(invites.filter((i) => i.status === 'pending').length);
+    setMyOpenActionCount(myActions.filter((a) => a.status !== 'done' && a.ownerId === user?.id).length);
+    setRiskCount(risks.length);
     if (user) setDashboard(await loadDashboardData(workspaceId, user.id));
   }, [user]);
 
+  const loadWorkspaceById = useCallback(async (workspaceId: string) => {
+    const ws = await getWorkspaceById(workspaceId);
+    setWorkspace(ws);
+    if (!ws) return;
+    localStorage.setItem(ACTIVE_WORKSPACE_KEY, ws.id);
+    const m = await listWorkspaceMembers(ws.id);
+    setMembers(m);
+    await refreshWorkspaceData(ws.id);
+  }, [refreshWorkspaceData]);
+
   useEffect(() => {
     if (!user || !isSupabaseConfigured) return;
-    getCurrentWorkspace(user.id).then(async (ws) => {
-      setWorkspace(ws);
-      if (!ws) return;
-      const m = await listWorkspaceMembers(ws.id);
-      setMembers(m);
-      await refreshWorkspaceData(ws.id);
+    listMyWorkspaces(user.id).then(async (list) => {
+      setWorkspaces(list);
+      if (list.length === 0) return;
+      const remembered = localStorage.getItem(ACTIVE_WORKSPACE_KEY);
+      const target = list.find((w) => w.id === remembered) ?? list[0];
+      await loadWorkspaceById(target.id);
     }).catch((e) => setError(e instanceof Error ? e.message : 'Could not load workspace'));
-  }, [user, refreshWorkspaceData]);
+  }, [user, loadWorkspaceById]);
 
   useEffect(() => {
     if (!supabase || !workspace) return;
@@ -144,6 +199,7 @@ function AppShell() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'decision_history' }, () => refreshWorkspaceData(workspace.id))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'polls' }, () => refreshWorkspaceData(workspace.id))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'poll_votes' }, () => refreshWorkspaceData(workspace.id))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'actions' }, () => refreshWorkspaceData(workspace.id))
       .subscribe();
     return () => { client.removeChannel(channel); };
   }, [workspace, refreshWorkspaceData]);
@@ -153,16 +209,24 @@ function AppShell() {
     setActiveDecisionId(id);
   };
 
-  // Real, working keyboard shortcuts: N = new decision, ? = shortcuts panel, Esc = close top overlay.
+  const switchWorkspace = async (id: string) => { setView('dashboard'); await loadWorkspaceById(id); };
+  const handleWorkspaceCreated = async (ws: { id: string; name: string }) => {
+    setShowNewWorkspace(false);
+    if (user) setWorkspaces(await listMyWorkspaces(user.id));
+    await loadWorkspaceById(ws.id);
+  };
+
+  // Real, working keyboard shortcuts: N = new decision, / = search, ? = shortcuts panel, Esc = close top overlay.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
       const typing = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable;
       if (e.key === 'Escape') {
         if (showShortcuts) setShowShortcuts(false);
+        else if (globalSearchOpen) setGlobalSearchOpen(false);
         else if (activeDecisionId) setActiveDecisionId(null);
         else if (showNewDecision) setShowNewDecision(false);
-        else if (showTeam) setShowTeam(false);
+        else if (showNewWorkspace) setShowNewWorkspace(false);
         else if (selectedTopic) setSelectedTopic(null);
         else if (navOpen) setNavOpen(false);
         return;
@@ -170,11 +234,11 @@ function AppShell() {
       if (typing) return;
       if (e.key === 'n' || e.key === 'N') setShowNewDecision(true);
       if (e.key === '?') setShowShortcuts((v) => !v);
-      if (e.key === '/') { e.preventDefault(); setView('discussions'); }
+      if (e.key === '/') { e.preventDefault(); setGlobalSearchOpen(true); }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [showShortcuts, activeDecisionId, showNewDecision, showTeam, selectedTopic, navOpen]);
+  }, [showShortcuts, globalSearchOpen, activeDecisionId, showNewDecision, showNewWorkspace, selectedTopic, navOpen]);
 
   const submitTopicMessage = async (e: FormEvent) => {
     e.preventDefault(); if (!message.trim() || !selectedTopic || !user || !workspace) return;
@@ -192,7 +256,7 @@ function AppShell() {
     catch (e) { setError(e instanceof Error ? e.message : 'Could not send message'); }
   };
 
-  const badges = { actions: 0, risks: 0, notifications: dashboard.teamActivity.length, invitations: pendingInviteCount };
+  const badges = { actions: myOpenActionCount, risks: riskCount, notifications: dashboard.teamActivity.length, invitations: pendingInviteCount };
   const isAdmin = members.some((m) => m.userId === user?.id && (m.role === 'owner' || m.role === 'admin'));
   const workspaceRole = members.find((m) => m.userId === user?.id)?.role ?? 'member';
   const greetingName = (user?.user_metadata?.full_name as string | undefined)?.split(' ')[0] ?? 'there';
@@ -204,6 +268,10 @@ function AppShell() {
         onNavigate={setView}
         workspaceName={workspace?.name ?? 'Demo workspace'}
         workspaceRole={workspaceRole}
+        workspaces={workspaces}
+        activeWorkspaceId={workspace?.id ?? null}
+        onSwitchWorkspace={switchWorkspace}
+        onCreateWorkspace={() => setShowNewWorkspace(true)}
         badges={badges}
         collapsed={sidebarCollapsed}
         onToggleCollapsed={() => setSidebarCollapsed((v) => !v)}
@@ -216,8 +284,8 @@ function AppShell() {
             memberCount={workspace?.memberCount ?? 128}
             isLive={Boolean(workspace)}
             activity={dashboard.teamActivity}
-            searchOpen={searchOpen}
-            onToggleSearch={() => setSearchOpen((v) => !v)}
+            searchOpen={globalSearchOpen}
+            onToggleSearch={() => setGlobalSearchOpen((v) => !v)}
             onOpenNav={() => setNavOpen(true)}
           />
         </div>
@@ -249,19 +317,30 @@ function AppShell() {
           />
         )}
         {view === 'discussions' && <DiscussionsView topics={topics} decisions={decisions} onSelectTopic={setSelectedTopic} />}
-        {view === 'decisions' && <DecisionsListView decisions={decisions} onOpen={openDecision} onNew={() => setShowNewDecision(true)} />}
+        {view === 'decisions' && workspace && <DecisionsListView workspaceId={workspace.id} decisions={decisions} onOpen={openDecision} onNew={() => setShowNewDecision(true)} />}
+        {view === 'decisions' && !workspace && <DecisionsListView workspaceId="demo" decisions={decisions} onOpen={openDecision} onNew={() => setShowNewDecision(true)} />}
         {view === 'polls' && workspace && <PollsView workspaceId={workspace.id} polls={polls} onRefresh={() => refreshWorkspaceData(workspace.id)} />}
         {view === 'polls' && !workspace && <ComingSoonView icon={Sparkles} phase="Connect Supabase" title="Polls need a workspace" description="Sign in and create a workspace to create and vote on real polls." />}
         {view === 'resources' && workspace && <ResourcesView workspaceId={workspace.id} />}
         {view === 'resources' && !workspace && <ComingSoonView icon={FolderOpen} phase="Connect Supabase" title="Resources need a workspace" description="Sign in and create a workspace to store real resources." />}
-        {view === 'actions' && <ComingSoonView icon={CheckSquare} phase="Phase 3 — Knowledge" title="Actions" description="When a decision is made, PULSE will turn it into owned, deadlined tasks — Resources → Search → Decision history → Actions." />}
-        {view === 'pulse-ai' && <ComingSoonView icon={Sparkles} phase="Phase 4 — AI" title="PULSE AI" description="A workspace-aware assistant, connected securely through the backend — never by exposing an AI key in the browser." examples={['What decisions are currently stuck?', 'What are our biggest disagreements?', 'Summarize this week\'s discussions.', 'Why did we reject the previous supplier?']} />}
-        {view === 'risks' && <ComingSoonView icon={ShieldAlert} phase="Phase 4 — AI" title="Risk Center" description="Automatic detection of stalled discussions, team disagreements, and decisions missing evidence." />}
-        {view === 'analytics' && <ComingSoonView icon={PieChart} phase="Phase 5 — Business" title="Analytics" description="Decision health, average decision time, team participation, and department activity — for managers and executives." />}
+        {view === 'actions' && workspace && <ActionsView workspaceId={workspace.id} members={members} />}
+        {view === 'actions' && !workspace && <ComingSoonView icon={Sparkles} phase="Connect Supabase" title="Actions need a workspace" description="Sign in and create a workspace to create and track real actions." />}
+        {view === 'pulse-ai' && workspace && <PulseAIView workspaceId={workspace.id} />}
+        {view === 'pulse-ai' && !workspace && <ComingSoonView icon={Sparkles} phase="Connect Supabase" title="PULSE AI needs a workspace" description="Sign in and create a workspace, then deploy the pulse-assistant function." />}
+        {view === 'risks' && workspace && <RiskCenterView workspaceId={workspace.id} />}
+        {view === 'risks' && !workspace && <ComingSoonView icon={Sparkles} phase="Connect Supabase" title="Risk Center needs a workspace" description="Risk detection runs against your real discussions, votes, and actions." />}
+        {view === 'analytics' && workspace && <AnalyticsView workspaceId={workspace.id} />}
+        {view === 'analytics' && !workspace && <ComingSoonView icon={Sparkles} phase="Connect Supabase" title="Analytics needs a workspace" description="Every number here is computed from your real workspace activity." />}
+        {view === 'meeting-summaries' && workspace && <MeetingSummariesView workspaceId={workspace.id} />}
+        {view === 'meeting-summaries' && !workspace && <ComingSoonView icon={Sparkles} phase="Connect Supabase" title="Meeting Summaries need a workspace" description="Sign in and create a workspace, then deploy the meeting-summary function." />}
         {view === 'team' && workspace && <TeamView workspaceId={workspace.id} />}
         {view === 'notifications' && <NotificationsView activity={dashboard.teamActivity} />}
         {view === 'invitations' && workspace && <InvitationsView workspaceId={workspace.id} />}
-        {view === 'settings' && <SettingsView workspaceName={workspace?.name ?? 'Demo workspace'} workspaceRole={workspaceRole} />}
+        {view === 'audit-log' && workspace && <AuditLogView workspaceId={workspace.id} />}
+        {view === 'audit-log' && !workspace && <ComingSoonView icon={Sparkles} phase="Connect Supabase" title="Audit Log needs a workspace" description="Every role change, invite, and decision outcome is logged automatically once you're connected." />}
+        {view === 'settings' && workspace && <SettingsView workspaceId={workspace.id} workspaceName={workspace.name} workspaceRole={workspaceRole} isAdmin={isAdmin} />}
+        {view === 'integrations' && workspace && <IntegrationsView workspaceId={workspace.id} isAdmin={isAdmin} />}
+        {view === 'integrations' && !workspace && <ComingSoonView icon={Sparkles} phase="Connect Supabase" title="Integrations need a workspace" description="Connect Slack and the rest once you're signed into a real workspace." />}
         {view === 'help' && <HelpView onOpenShortcuts={() => setShowShortcuts(true)} />}
 
         {view === 'discussions' && <MessageComposer onSend={handleComposerSend} onPlus={() => setShowNewDecision(true)} />}
@@ -281,6 +360,8 @@ function AppShell() {
         onClose={() => setNavOpen(false)}
         onNavigate={setView}
       />
+
+      <GlobalSearchModal open={globalSearchOpen} workspaceId={workspace?.id ?? null} onClose={() => setGlobalSearchOpen(false)} onNavigate={setView} />
 
       <AnimatePresence>
         {selectedTopic && (
@@ -309,6 +390,8 @@ function AppShell() {
         }}
       />
 
+      <NewWorkspaceModal open={showNewWorkspace} onClose={() => setShowNewWorkspace(false)} onCreated={handleWorkspaceCreated} />
+
       {activeDecisionId && (
         <DecisionRoom
           decisionId={activeDecisionId}
@@ -318,7 +401,6 @@ function AppShell() {
         />
       )}
 
-      {showTeam && workspace && <TeamPanel workspaceId={workspace.id} onClose={() => setShowTeam(false)} />}
       <KeyboardShortcutsModal open={showShortcuts} onClose={() => setShowShortcuts(false)} />
     </div>
   );

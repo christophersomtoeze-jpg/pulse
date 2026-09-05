@@ -536,3 +536,190 @@ exception when duplicate_object then null; end $$;
 -- instead of hoping the auto-reload already fired.
 -- ============================================================================
 notify pgrst, 'reload schema';
+
+-- ============================================================================
+-- PULSE Phase 3 — Knowledge: Actions/Tasks
+-- ============================================================================
+do $$ begin
+  create type public.action_status as enum ('todo', 'in-progress', 'done');
+exception when duplicate_object then null; end $$;
+do $$ begin
+  create type public.action_priority as enum ('low', 'medium', 'high');
+exception when duplicate_object then null; end $$;
+
+create table if not exists public.actions (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references public.workspaces(id) on delete cascade,
+  decision_id uuid references public.decisions(id) on delete set null,
+  title text not null check (char_length(trim(title)) between 1 and 300),
+  description text,
+  owner_id uuid references public.profiles(id) on delete set null,
+  deadline timestamptz,
+  status public.action_status not null default 'todo',
+  priority public.action_priority not null default 'medium',
+  created_by uuid not null references public.profiles(id) on delete restrict,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index if not exists actions_workspace_idx on public.actions(workspace_id, status);
+create index if not exists actions_owner_idx on public.actions(owner_id, status);
+
+alter table public.actions enable row level security;
+drop policy if exists actions_select_member on public.actions;
+create policy actions_select_member on public.actions for select to authenticated using (public.is_workspace_member(workspace_id));
+drop policy if exists actions_insert_member on public.actions;
+create policy actions_insert_member on public.actions for insert to authenticated with check (public.is_workspace_member(workspace_id) and created_by = auth.uid());
+drop policy if exists actions_update_member on public.actions;
+create policy actions_update_member on public.actions for update to authenticated using (public.is_workspace_member(workspace_id)) with check (public.is_workspace_member(workspace_id));
+drop policy if exists actions_delete_owner on public.actions;
+create policy actions_delete_owner on public.actions for delete to authenticated using (public.is_workspace_admin(workspace_id) or created_by = auth.uid());
+
+do $$ begin
+  alter publication supabase_realtime add table public.actions;
+exception when duplicate_object then null; end $$;
+
+-- ============================================================================
+-- PULSE Phase 4 — AI: standalone assistant + meeting summaries
+-- ============================================================================
+create table if not exists public.assistant_messages (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references public.workspaces(id) on delete cascade,
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  role text not null check (role in ('user', 'assistant')),
+  content text not null,
+  created_at timestamptz not null default now()
+);
+create index if not exists assistant_messages_user_idx on public.assistant_messages(workspace_id, user_id, created_at);
+
+alter table public.assistant_messages enable row level security;
+drop policy if exists assistant_messages_select_own on public.assistant_messages;
+create policy assistant_messages_select_own on public.assistant_messages for select to authenticated using (user_id = auth.uid() and public.is_workspace_member(workspace_id));
+drop policy if exists assistant_messages_insert_own on public.assistant_messages;
+create policy assistant_messages_insert_own on public.assistant_messages for insert to authenticated with check (user_id = auth.uid() and public.is_workspace_member(workspace_id));
+
+create table if not exists public.meeting_summaries (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references public.workspaces(id) on delete cascade,
+  title text not null,
+  raw_notes text not null,
+  summary text,
+  key_points text,
+  action_items text,
+  created_by uuid not null references public.profiles(id) on delete restrict,
+  created_at timestamptz not null default now()
+);
+create index if not exists meeting_summaries_workspace_idx on public.meeting_summaries(workspace_id, created_at desc);
+
+alter table public.meeting_summaries enable row level security;
+drop policy if exists meeting_summaries_select_member on public.meeting_summaries;
+create policy meeting_summaries_select_member on public.meeting_summaries for select to authenticated using (public.is_workspace_member(workspace_id));
+drop policy if exists meeting_summaries_insert_member on public.meeting_summaries;
+create policy meeting_summaries_insert_member on public.meeting_summaries for insert to authenticated with check (public.is_workspace_member(workspace_id) and created_by = auth.uid());
+
+do $$ begin
+  alter publication supabase_realtime add table public.meeting_summaries;
+exception when duplicate_object then null; end $$;
+do $$ begin
+  alter publication supabase_realtime add table public.assistant_messages;
+exception when duplicate_object then null; end $$;
+
+-- ============================================================================
+-- PULSE Phase 5 — Business: audit log, analytics support, billing scaffold
+-- ============================================================================
+create table if not exists public.audit_log (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references public.workspaces(id) on delete cascade,
+  actor_id uuid references public.profiles(id) on delete set null,
+  action text not null,
+  detail text,
+  created_at timestamptz not null default now()
+);
+create index if not exists audit_log_workspace_idx on public.audit_log(workspace_id, created_at desc);
+
+alter table public.audit_log enable row level security;
+drop policy if exists audit_log_select_member on public.audit_log;
+create policy audit_log_select_member on public.audit_log for select to authenticated using (public.is_workspace_member(workspace_id));
+-- Inserts only ever happen via SECURITY DEFINER triggers/functions below — no direct client insert policy on purpose.
+
+create or replace function public.log_workspace_member_change() returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if tg_op = 'INSERT' then
+    insert into public.audit_log (workspace_id, actor_id, action, detail)
+    values (new.workspace_id, auth.uid(), 'member_added', format('Added a %s', new.role));
+  elsif tg_op = 'UPDATE' and old.role is distinct from new.role then
+    insert into public.audit_log (workspace_id, actor_id, action, detail)
+    values (new.workspace_id, auth.uid(), 'member_role_changed', format('Role changed from %s to %s', old.role, new.role));
+  elsif tg_op = 'DELETE' then
+    insert into public.audit_log (workspace_id, actor_id, action, detail)
+    values (old.workspace_id, auth.uid(), 'member_removed', 'Member removed from workspace');
+  end if;
+  return coalesce(new, old);
+end;
+$$;
+drop trigger if exists on_workspace_member_change on public.workspace_members;
+create trigger on_workspace_member_change after insert or update or delete on public.workspace_members for each row execute procedure public.log_workspace_member_change();
+
+create or replace function public.log_decision_outcome() returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if new.outcome is distinct from old.outcome and new.outcome is not null then
+    insert into public.audit_log (workspace_id, actor_id, action, detail)
+    values (new.workspace_id, auth.uid(), 'decision_' || new.outcome, format('Decision "%s" marked %s', new.title, new.outcome));
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists on_decision_outcome_change on public.decisions;
+create trigger on_decision_outcome_change after update on public.decisions for each row execute procedure public.log_decision_outcome();
+
+create or replace function public.log_invitation_sent() returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  insert into public.audit_log (workspace_id, actor_id, action, detail)
+  values (new.workspace_id, auth.uid(), 'invitation_sent', format('Invited %s as %s', new.email, new.role));
+  return new;
+end;
+$$;
+drop trigger if exists on_invitation_sent on public.workspace_invitations;
+create trigger on_invitation_sent after insert on public.workspace_invitations for each row execute procedure public.log_invitation_sent();
+
+-- Billing scaffold — inert until you connect a real Stripe account (see SUPABASE_SETUP.md).
+create table if not exists public.workspace_subscriptions (
+  workspace_id uuid primary key references public.workspaces(id) on delete cascade,
+  plan text not null default 'free' check (plan in ('free', 'pro', 'business', 'enterprise')),
+  status text not null default 'active' check (status in ('active', 'past_due', 'canceled')),
+  stripe_customer_id text,
+  stripe_subscription_id text,
+  current_period_end timestamptz,
+  updated_at timestamptz not null default now()
+);
+alter table public.workspace_subscriptions enable row level security;
+drop policy if exists workspace_subscriptions_select_member on public.workspace_subscriptions;
+create policy workspace_subscriptions_select_member on public.workspace_subscriptions for select to authenticated using (public.is_workspace_member(workspace_id));
+drop policy if exists workspace_subscriptions_admin_all on public.workspace_subscriptions;
+create policy workspace_subscriptions_admin_all on public.workspace_subscriptions for all to authenticated using (public.is_workspace_admin(workspace_id)) with check (public.is_workspace_admin(workspace_id));
+
+-- ============================================================================
+-- PULSE Phase 6 — Integrations framework (Slack fully wired; others scaffolded)
+-- ============================================================================
+create table if not exists public.workspace_integrations (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references public.workspaces(id) on delete cascade,
+  provider text not null check (provider in ('slack', 'teams', 'google', 'microsoft365', 'jira', 'notion')),
+  status text not null default 'disconnected' check (status in ('connected', 'disconnected')),
+  external_team_id text,
+  access_token text,
+  metadata jsonb not null default '{}'::jsonb,
+  connected_by uuid references public.profiles(id) on delete set null,
+  connected_at timestamptz,
+  created_at timestamptz not null default now(),
+  unique (workspace_id, provider)
+);
+alter table public.workspace_integrations enable row level security;
+drop policy if exists workspace_integrations_select_member on public.workspace_integrations;
+create policy workspace_integrations_select_member on public.workspace_integrations for select to authenticated using (public.is_workspace_member(workspace_id));
+drop policy if exists workspace_integrations_admin_all on public.workspace_integrations;
+create policy workspace_integrations_admin_all on public.workspace_integrations for all to authenticated using (public.is_workspace_admin(workspace_id)) with check (public.is_workspace_admin(workspace_id));
+-- NOTE: access_token is stored in plaintext here for simplicity. Before going to
+-- production with real integrations, move this column to use Supabase Vault
+-- (pgsodium) so tokens are encrypted at rest — see SUPABASE_SETUP.md.
+
+notify pgrst, 'reload schema';

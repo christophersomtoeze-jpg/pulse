@@ -8,8 +8,11 @@ export type AppView =
   | 'pulse-ai'
   | 'risks'
   | 'analytics'
+  | 'meeting-summaries'
   | 'team'
   | 'notifications'
   | 'invitations'
+  | 'audit-log'
   | 'settings'
+  | 'integrations'
   | 'help';

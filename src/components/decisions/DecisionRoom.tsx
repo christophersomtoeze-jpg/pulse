@@ -1,16 +1,16 @@
 import { useCallback, useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Calendar, ExternalLink, Link2, Plus, User, X } from 'lucide-react';
+import { Calendar, CheckSquare, ExternalLink, Link2, Plus, User, X } from 'lucide-react';
 import { useAuth } from '@/auth/AuthProvider';
 import { supabase } from '@/lib/supabase';
 import {
-  addDecisionComment, addDecisionResource, castDecisionVote, getDecision, getDecisionVoteTally,
-  getLatestAIAnalysis, listDecisionComments, listDecisionHistory, listDecisionResources,
+  addDecisionComment, addDecisionResource, castDecisionVote, createAction, getDecision, getDecisionVoteTally,
+  getLatestAIAnalysis, listActions, listDecisionComments, listDecisionHistory, listDecisionResources,
   requestAIAnalysis, setDecisionOutcome, type WorkspaceMember,
 } from '@/lib/pulseApi';
 import type {
   DecisionAIAnalysis, DecisionComment, DecisionHistoryEntry, DecisionOutcome,
-  DecisionResource, DecisionSummary, DecisionVoteTally, VoteChoice,
+  DecisionResource, DecisionSummary, DecisionVoteTally, VoteChoice, WorkspaceAction,
 } from '@/types';
 import { VotingPanel } from './VotingPanel';
 import { CommentThread } from './CommentThread';
@@ -39,6 +39,9 @@ export function DecisionRoom({ decisionId, members, isAdmin, onClose }: Decision
   const [tally, setTally] = useState<DecisionVoteTally>({ yes: 0, no: 0, needsInfo: 0, total: 0, myVote: null });
   const [history, setHistory] = useState<DecisionHistoryEntry[]>([]);
   const [analysis, setAnalysis] = useState<DecisionAIAnalysis | null>(null);
+  const [decisionActions, setDecisionActions] = useState<WorkspaceAction[]>([]);
+  const [addingAction, setAddingAction] = useState(false);
+  const [actionTitle, setActionTitle] = useState('');
   const [addingResource, setAddingResource] = useState(false);
   const [resourceName, setResourceName] = useState('');
   const [resourceUrl, setResourceUrl] = useState('');
@@ -47,15 +50,17 @@ export function DecisionRoom({ decisionId, members, isAdmin, onClose }: Decision
   const load = useCallback(async () => {
     if (!user) return;
     try {
-      const [d, res, cmts, t, hist, ai] = await Promise.all([
-        getDecision(decisionId),
+      const d = await getDecision(decisionId);
+      const [res, cmts, t, hist, ai, allActions] = await Promise.all([
         listDecisionResources(decisionId),
         listDecisionComments(decisionId),
         getDecisionVoteTally(decisionId, user.id),
         listDecisionHistory(decisionId),
         getLatestAIAnalysis(decisionId),
+        d ? listActions(d.workspaceId) : Promise.resolve([] as WorkspaceAction[]),
       ]);
       setDecision(d); setResources(res); setComments(cmts); setTally(t); setHistory(hist); setAnalysis(ai);
+      setDecisionActions(allActions.filter((a) => a.decisionId === decisionId));
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not load this decision');
     }
@@ -143,6 +148,37 @@ export function DecisionRoom({ decisionId, members, isAdmin, onClose }: Decision
                   </a>
                 ))}
                 {resources.length === 0 && <p className="text-xs text-ink-500">No resources added yet.</p>}
+              </div>
+            </div>
+
+            <div>
+              <div className="flex items-center justify-between">
+                <h3 className="flex items-center gap-1.5 text-sm font-semibold"><CheckSquare className="h-3.5 w-3.5 text-pulse-300" /> Actions from this decision</h3>
+                <button onClick={() => setAddingAction((v) => !v)} className="icon-btn h-7 w-7"><Plus className="h-3.5 w-3.5" /></button>
+              </div>
+              {addingAction && (
+                <div className="mt-2 flex gap-2">
+                  <input value={actionTitle} onChange={(e) => setActionTitle(e.target.value)} placeholder="What needs to happen next?" className="field text-xs" />
+                  <button
+                    onClick={async () => {
+                      if (!user || !actionTitle.trim()) return;
+                      await createAction(decision.workspaceId, { title: actionTitle.trim(), decisionId: decision.id, ownerId: decision.ownerId }, user.id);
+                      setActionTitle(''); setAddingAction(false); load();
+                    }}
+                    className="icon-btn shrink-0"
+                  >
+                    <Plus className="h-4 w-4" />
+                  </button>
+                </div>
+              )}
+              <div className="mt-2 space-y-1.5">
+                {decisionActions.map((a) => (
+                  <div key={a.id} className="rounded-xl border border-white/5 bg-white/[.02] px-3 py-2 text-xs">
+                    <span className={a.status === 'done' ? 'text-ink-500 line-through' : 'text-ink-200'}>{a.title}</span>
+                    {a.ownerName && <span className="ml-2 text-ink-500">→ {a.ownerName}</span>}
+                  </div>
+                ))}
+                {decisionActions.length === 0 && <p className="text-xs text-ink-500">No actions created from this decision yet.</p>}
               </div>
             </div>
 

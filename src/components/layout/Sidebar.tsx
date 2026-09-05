@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import {
-  Activity, BarChart3, Bell, CheckSquare, ChevronDown, Folder, HelpCircle,
-  Home, Keyboard, LayoutGrid, MessageCircle, MoreVertical, PanelLeftClose,
+  Activity, BarChart3, Bell, CheckSquare, ChevronDown, ClipboardList, Folder, HelpCircle,
+  History, Home, Keyboard, LayoutGrid, MessageCircle, MoreVertical, Plug, PanelLeftClose,
   PanelLeftOpen, PieChart, Settings, ShieldAlert, Sparkles, UserPlus, Users,
 } from 'lucide-react';
 import { useAuth } from '@/auth/AuthProvider';
@@ -27,16 +27,19 @@ export const intelligenceItems: NavItem[] = [
   { id: 'pulse-ai', label: 'PULSE AI', icon: Sparkles },
   { id: 'risks', label: 'Risks', icon: ShieldAlert },
   { id: 'analytics', label: 'Analytics', icon: PieChart },
+  { id: 'meeting-summaries', label: 'Meeting Summaries', icon: ClipboardList },
 ];
 
 export const teamItems: NavItem[] = [
   { id: 'team', label: 'Team', icon: Users },
   { id: 'notifications', label: 'Notifications', icon: Bell },
   { id: 'invitations', label: 'Invitations', icon: UserPlus },
+  { id: 'audit-log', label: 'Audit Log', icon: History },
 ];
 
 export const toolItems: NavItem[] = [
   { id: 'settings', label: 'Settings', icon: Settings },
+  { id: 'integrations', label: 'Integrations', icon: Plug },
   { id: 'help', label: 'Help & Support', icon: HelpCircle },
 ];
 
@@ -45,6 +48,10 @@ interface SidebarProps {
   onNavigate: (view: AppView) => void;
   workspaceName: string;
   workspaceRole: string;
+  workspaces: { id: string; name: string; role: string }[];
+  activeWorkspaceId: string | null;
+  onSwitchWorkspace: (id: string) => void;
+  onCreateWorkspace: () => void;
   badges: { actions: number; risks: number; notifications: number; invitations: number };
   collapsed: boolean;
   onToggleCollapsed: () => void;
@@ -89,7 +96,7 @@ function NavSection({ title, items, view, onNavigate, badges, collapsed }: {
   );
 }
 
-export function Sidebar({ view, onNavigate, workspaceName, workspaceRole, badges, collapsed, onToggleCollapsed, onOpenShortcuts }: SidebarProps) {
+export function Sidebar({ view, onNavigate, workspaceName, workspaceRole, workspaces, activeWorkspaceId, onSwitchWorkspace, onCreateWorkspace, badges, collapsed, onToggleCollapsed, onOpenShortcuts }: SidebarProps) {
   const { user, signOut } = useAuth();
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
@@ -124,9 +131,22 @@ export function Sidebar({ view, onNavigate, workspaceName, workspaceRole, badges
               <ChevronDown className={`h-4 w-4 shrink-0 text-ink-500 transition-transform ${switcherOpen ? 'rotate-180' : ''}`} />
             </button>
             {switcherOpen && (
-              <p className="mt-1.5 rounded-lg border border-white/5 bg-black/20 p-2.5 text-[11px] text-ink-500">
-                Multi-workspace switching is coming in a later phase — for now you're in <b className="text-ink-300">{workspaceName}</b>.
-              </p>
+              <div className="mt-1.5 space-y-1 rounded-lg border border-white/5 bg-black/20 p-1.5">
+                {workspaces.map((w) => (
+                  <button
+                    key={w.id}
+                    onClick={() => { onSwitchWorkspace(w.id); setSwitcherOpen(false); }}
+                    className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs ${w.id === activeWorkspaceId ? 'bg-[#7c3aed]/15 text-pulse-200' : 'text-ink-300 hover:bg-white/5'}`}
+                  >
+                    <span className="grid h-6 w-6 shrink-0 place-items-center rounded-md bg-gradient-to-br from-[#7c3aed] to-[#06b6d4] text-[9px] font-bold text-white">{w.name.slice(0, 2).toUpperCase()}</span>
+                    <span className="truncate">{w.name}</span>
+                    <span className="ml-auto shrink-0 text-[10px] text-ink-500">{w.role}</span>
+                  </button>
+                ))}
+                <button onClick={() => { onCreateWorkspace(); setSwitcherOpen(false); }} className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs font-medium text-pulse-300 hover:bg-white/5">
+                  + New workspace
+                </button>
+              </div>
             )}
           </div>
         )}
