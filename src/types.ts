@@ -226,3 +226,43 @@ export interface PlatformMetrics {
   discussionsCreated7d: number;
   weeklyActiveUsers: number;
 }
+
+// ---- Settings ----
+export interface ProfileDetails {
+  fullName: string;
+  email: string;
+  phone: string;
+  bio: string;
+  avatarUrl: string | null;
+}
+
+export interface NotificationPreferences {
+  emailEnabled: boolean;
+  notifyMentions: boolean;
+  notifyDecisions: boolean;
+  notifyActions: boolean;
+  notifyInvitations: boolean;
+  digestFrequency: 'daily' | 'weekly' | 'off';
+}
+
+export interface LoginHistoryEntry {
+  id: string;
+  userAgent: string | null;
+  createdAt: string;
+}
+
+export interface WorkspaceGeneralSettings {
+  name: string;
+  description: string;
+  aiEnabled: boolean;
+  defaultLanguage: string;
+  timezone: string;
+}
+
+export interface WorkspaceUsage {
+  activeMembers: number;
+  discussionsCreated: number;
+  decisionsMade: number;
+  pollsCreated: number;
+  aiAnalysesRun: number;
+}

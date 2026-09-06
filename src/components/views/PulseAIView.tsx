@@ -12,7 +12,7 @@ const suggestions = [
   'What should we decide next?',
 ];
 
-export function PulseAIView({ workspaceId }: { workspaceId: string }) {
+export function PulseAIView({ workspaceId, aiEnabled = true }: { workspaceId: string; aiEnabled?: boolean }) {
   const { user } = useAuth();
   const [messages, setMessages] = useState<AssistantMessage[]>([]);
   const [input, setInput] = useState('');
@@ -28,6 +28,7 @@ export function PulseAIView({ workspaceId }: { workspaceId: string }) {
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
 
   const send = async (text: string) => {
+    if (!aiEnabled) return;
     if (!text.trim() || busy) return;
     setBusy(true); setError('');
     setMessages((m) => [...m, { id: `temp-${Date.now()}`, role: 'user', content: text, createdAt: new Date().toISOString() }]);
@@ -48,6 +49,7 @@ export function PulseAIView({ workspaceId }: { workspaceId: string }) {
         <p className="flex items-center gap-1.5 text-xs uppercase tracking-[.2em] text-pulse-300"><Sparkles className="h-3.5 w-3.5" /> Phase 4 — AI</p>
         <h1 className="mt-1 font-display text-2xl font-semibold">PULSE AI</h1>
         {!isSupabaseConfigured && <p className="mt-1 text-xs text-ink-500">Connect Supabase and deploy the pulse-assistant function to enable this.</p>}
+        {isSupabaseConfigured && !aiEnabled && <p className="mt-1 text-xs text-alert-300">AI features are turned off for this workspace — an admin can re-enable them in Settings &gt; AI Settings.</p>}
       </div>
 
       <div className="mt-4 flex-1 space-y-3 overflow-y-auto">
@@ -71,7 +73,7 @@ export function PulseAIView({ workspaceId }: { workspaceId: string }) {
 
       <form onSubmit={submit} className="mt-3 flex gap-2">
         <input value={input} onChange={(e) => setInput(e.target.value)} placeholder="Ask PULSE AI about this workspace…" className="field flex-1 text-sm" />
-        <button disabled={busy || !input.trim()} className="icon-btn shrink-0 bg-pulse-500/15 text-pulse-300 disabled:opacity-30"><Send className="h-4 w-4" /></button>
+        <button disabled={busy || !input.trim() || !aiEnabled} className="icon-btn shrink-0 bg-pulse-500/15 text-pulse-300 disabled:opacity-30"><Send className="h-4 w-4" /></button>
       </form>
     </div>
   );

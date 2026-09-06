@@ -870,3 +870,136 @@ $$;
 grant execute on function public.create_workspace_with_owner(text,text) to authenticated;
 
 notify pgrst, 'reload schema';
+
+-- ============================================================================
+-- Settings upgrade: Account fields, email sync, login history, notification
+-- preferences, workspace general settings, AI toggle, account deletion support
+-- ============================================================================
+
+alter table public.profiles add column if not exists email text;
+alter table public.profiles add column if not exists phone text;
+alter table public.profiles add column if not exists bio text;
+
+-- Keep profiles.email in sync when someone changes their auth email (the
+-- existing handle_new_user trigger only fires on INSERT, not email changes).
+create or replace function public.handle_user_email_change() returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if new.email is distinct from old.email then
+    update public.profiles set email = lower(new.email), updated_at = now() where id = new.id;
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists on_auth_user_email_updated on auth.users;
+create trigger on_auth_user_email_updated after update of email on auth.users for each row execute procedure public.handle_user_email_change();
+
+-- Login history — real, minimal (timestamp + user agent), logged by the client
+-- right after a successful sign-in. Supabase's public API doesn't expose a
+-- cross-device "active sessions" list, so this is the honest substitute.
+create table if not exists public.login_history (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  user_agent text,
+  created_at timestamptz not null default now()
+);
+create index if not exists login_history_user_idx on public.login_history(user_id, created_at desc);
+alter table public.login_history enable row level security;
+drop policy if exists login_history_select_own on public.login_history;
+create policy login_history_select_own on public.login_history for select to authenticated using (user_id = auth.uid());
+drop policy if exists login_history_insert_own on public.login_history;
+create policy login_history_insert_own on public.login_history for insert to authenticated with check (user_id = auth.uid());
+
+-- Workspace general settings.
+alter table public.workspaces add column if not exists description text;
+alter table public.workspaces add column if not exists ai_enabled boolean not null default true;
+alter table public.workspaces add column if not exists default_language text not null default 'en';
+alter table public.workspaces add column if not exists timezone text not null default 'UTC';
+
+-- Notification preferences — one row per user (applies across all their workspaces for now).
+create table if not exists public.notification_preferences (
+  user_id uuid primary key references public.profiles(id) on delete cascade,
+  email_enabled boolean not null default true,
+  notify_mentions boolean not null default true,
+  notify_decisions boolean not null default true,
+  notify_actions boolean not null default true,
+  notify_invitations boolean not null default true,
+  digest_frequency text not null default 'weekly' check (digest_frequency in ('daily', 'weekly', 'off')),
+  updated_at timestamptz not null default now()
+);
+alter table public.notification_preferences enable row level security;
+drop policy if exists notification_preferences_select_own on public.notification_preferences;
+create policy notification_preferences_select_own on public.notification_preferences for select to authenticated using (user_id = auth.uid());
+drop policy if exists notification_preferences_upsert_own on public.notification_preferences;
+create policy notification_preferences_upsert_own on public.notification_preferences for insert to authenticated with check (user_id = auth.uid());
+drop policy if exists notification_preferences_update_own on public.notification_preferences;
+create policy notification_preferences_update_own on public.notification_preferences for update to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());
+
+-- Used by the send-notification-email edge function to look up who to email
+-- and whether they actually want that category of email — SECURITY DEFINER
+-- because the function runs with the recipient's identity, not the sender's.
+create or replace function public.get_notification_target(p_user_id uuid, p_category text)
+returns table (email text, full_name text) language plpgsql security definer set search_path = public as $$
+declare wants_it boolean;
+begin
+  select
+    case p_category
+      when 'mentions' then coalesce(np.notify_mentions, true)
+      when 'decisions' then coalesce(np.notify_decisions, true)
+      when 'actions' then coalesce(np.notify_actions, true)
+      when 'invitations' then coalesce(np.notify_invitations, true)
+      else true
+    end and coalesce(np.email_enabled, true)
+  into wants_it
+  from public.profiles p
+  left join public.notification_preferences np on np.user_id = p.id
+  where p.id = p_user_id;
+
+  if wants_it is not false then
+    return query select p.email, p.full_name from public.profiles p where p.id = p_user_id;
+  end if;
+  return;
+end;
+$$;
+grant execute on function public.get_notification_target(uuid, text) to authenticated, service_role;
+
+notify pgrst, 'reload schema';
+
+-- ============================================================================
+-- Daily/weekly digest emails via pg_cron. If this errors with "extension
+-- pg_cron does not exist", enable it first in Supabase Dashboard > Database >
+-- Extensions (search "pg_cron", toggle on), then re-run this block.
+-- ============================================================================
+create extension if not exists pg_cron with schema extensions;
+
+-- Requires the project URL + service-role key so pg_cron can call the edge
+-- function directly over HTTP via pg_net (also needs enabling the same way).
+create extension if not exists pg_net with schema extensions;
+
+-- Replace <PROJECT_REF> and <SERVICE_ROLE_KEY> before running this select,
+-- or just skip it — digests simply won't send until this is scheduled.
+-- select cron.schedule(
+--   'pulse-daily-digest', '0 13 * * *',
+--   $$ select net.http_post(
+--     url := 'https://<PROJECT_REF>.supabase.co/functions/v1/send-digest-emails',
+--     headers := '{"Authorization": "Bearer <SERVICE_ROLE_KEY>", "Content-Type": "application/json"}'::jsonb,
+--     body := '{"frequency": "daily"}'::jsonb
+--   ); $$
+-- );
+-- select cron.schedule(
+--   'pulse-weekly-digest', '0 13 * * 1',
+--   $$ select net.http_post(
+--     url := 'https://<PROJECT_REF>.supabase.co/functions/v1/send-digest-emails',
+--     headers := '{"Authorization": "Bearer <SERVICE_ROLE_KEY>", "Content-Type": "application/json"}'::jsonb,
+--     body := '{"frequency": "weekly"}'::jsonb
+--   ); $$
+-- );
+
+notify pgrst, 'reload schema';
+
+-- Workspace deletion — owner only. Every child table already has "on delete
+-- cascade" back to workspaces, so this one delete removes everything real:
+-- discussions, decisions, actions, polls, resources, integrations, etc.
+drop policy if exists workspace_delete_owner on public.workspaces;
+create policy workspace_delete_owner on public.workspaces for delete to authenticated using (owner_id = auth.uid());
+
+notify pgrst, 'reload schema';

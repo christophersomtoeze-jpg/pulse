@@ -79,3 +79,34 @@ select id from public.profiles where email = 'you@yourcompany.com';
 
 ## Onboarding
 Every new workspace now seeds a "Welcome to PULSE" discussion and a sample decision automatically — no code change needed, this is part of `schema.sql`. The onboarding checklist card on the home screen tracks real completion (first decision created, teammate invited, first vote cast) and dismisses itself once done or by hand.
+
+## Email notifications (Settings > Notifications)
+Real emails for @mentions and assigned actions, plus optional daily/weekly digests. Where to add the key:
+
+1. Create a free account at https://resend.com
+2. **API Keys** → Create API Key → copy it
+3. Add it to Supabase, then deploy the function:
+```bash
+supabase secrets set RESEND_API_KEY=re_...
+supabase functions deploy send-notification-email
+```
+4. (Optional) Verify your own domain in Resend's dashboard and set the sender:
+```bash
+supabase secrets set RESEND_FROM_ADDRESS="PULSE <notifications@yourdomain.com>"
+```
+Until you verify a domain, Resend only lets you send to the email address you signed up with — fine for testing, not for real users.
+
+### Daily/weekly digest emails (optional, needs one more step)
+```bash
+supabase functions deploy send-digest-emails --no-verify-jwt
+```
+Then in Supabase Dashboard → **Database → Extensions**, enable `pg_cron` and `pg_net` if they're not already on. Open the commented-out `cron.schedule(...)` block at the very end of `schema.sql`, replace `<PROJECT_REF>` and `<SERVICE_ROLE_KEY>` with your real values, uncomment it, and run just that block in the SQL Editor.
+
+## Two-factor authentication (Settings > Password & Security)
+This uses Supabase Auth's built-in TOTP support directly — no secrets or setup needed, it works as soon as `schema.sql` is applied. If enrollment ever errors, check Authentication settings in your Supabase Dashboard for an MFA toggle and make sure it's on.
+
+## Account deletion
+```bash
+supabase functions deploy delete-account
+```
+No secrets needed beyond what's already set (it uses your existing service-role key).

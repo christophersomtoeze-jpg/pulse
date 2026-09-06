@@ -52,7 +52,7 @@ function SummaryCard({ s }: { s: MeetingSummary }) {
   );
 }
 
-export function MeetingSummariesView({ workspaceId }: { workspaceId: string }) {
+export function MeetingSummariesView({ workspaceId, aiEnabled = true }: { workspaceId: string; aiEnabled?: boolean }) {
   const [summaries, setSummaries] = useState<MeetingSummary[]>([]);
   const [error, setError] = useState('');
 
@@ -65,9 +65,10 @@ export function MeetingSummariesView({ workspaceId }: { workspaceId: string }) {
         <p className="flex items-center gap-1.5 text-xs uppercase tracking-[.2em] text-pulse-300"><ClipboardList className="h-3.5 w-3.5" /> Phase 4 — AI</p>
         <h1 className="mt-1 font-display text-2xl font-semibold">Meeting Summaries</h1>
         {!isSupabaseConfigured && <p className="mt-1 text-xs text-ink-500">Connect Supabase and deploy the meeting-summary function to enable this.</p>}
+        {isSupabaseConfigured && !aiEnabled && <p className="mt-1 text-xs text-alert-300">AI features are turned off for this workspace — an admin can re-enable them in Settings &gt; AI Settings.</p>}
       </div>
 
-      <NewSummaryForm workspaceId={workspaceId} onCreated={load} />
+      {aiEnabled && <NewSummaryForm workspaceId={workspaceId} onCreated={load} />}
       {error && <p className="text-sm text-ember-400">{error}</p>}
 
       <div className="space-y-2.5">

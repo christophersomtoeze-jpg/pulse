@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import type { Session, User } from '@supabase/supabase-js';
 import { isSupabaseConfigured, supabase } from '@/lib/supabase';
+import { recordLogin } from '@/lib/pulseApi';
 
 export type OAuthProvider = 'google' | 'azure' | 'apple';
 
@@ -32,9 +33,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setLoading(false);
     });
 
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+    const { data: listener } = supabase.auth.onAuthStateChange((event, nextSession) => {
       setSession(nextSession);
       setLoading(false);
+      if (event === 'SIGNED_IN' && nextSession?.user) recordLogin(nextSession.user.id);
     });
 
     return () => listener.subscription.unsubscribe();

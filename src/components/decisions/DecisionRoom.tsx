@@ -28,10 +28,11 @@ interface DecisionRoomProps {
   decisionId: string;
   members: WorkspaceMember[];
   isAdmin: boolean;
+  aiEnabled?: boolean;
   onClose: () => void;
 }
 
-export function DecisionRoom({ decisionId, members, isAdmin, onClose }: DecisionRoomProps) {
+export function DecisionRoom({ decisionId, members, isAdmin, aiEnabled = true, onClose }: DecisionRoomProps) {
   const { user } = useAuth();
   const [decision, setDecision] = useState<DecisionSummary | null>(null);
   const [resources, setResources] = useState<DecisionResource[]>([]);
@@ -187,6 +188,7 @@ export function DecisionRoom({ decisionId, members, isAdmin, onClose }: Decision
             <AIInsightPanel
               analysis={analysis}
               configured={Boolean(supabase)}
+              aiEnabled={aiEnabled}
               onAnalyze={async () => { const a = await requestAIAnalysis(decision.id); setAnalysis(a); }}
             />
 

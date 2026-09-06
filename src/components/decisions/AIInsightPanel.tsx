@@ -5,6 +5,7 @@ import type { DecisionAIAnalysis } from '@/types';
 interface AIInsightPanelProps {
   analysis: DecisionAIAnalysis | null;
   configured: boolean;
+  aiEnabled?: boolean;
   onAnalyze: () => Promise<void>;
 }
 
@@ -22,7 +23,7 @@ function ConfidenceMeter({ value }: { value: number }) {
   );
 }
 
-export function AIInsightPanel({ analysis, configured, onAnalyze }: AIInsightPanelProps) {
+export function AIInsightPanel({ analysis, configured, aiEnabled = true, onAnalyze }: AIInsightPanelProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
@@ -37,12 +38,13 @@ export function AIInsightPanel({ analysis, configured, onAnalyze }: AIInsightPan
     <div className="rounded-2xl border border-[#7c3aed]/20 bg-[#7c3aed]/5 p-4">
       <div className="flex items-center justify-between">
         <h3 className="flex items-center gap-1.5 text-sm font-semibold"><Sparkles className="h-4 w-4 text-pulse-300" /> AI Decision Intelligence</h3>
-        <button onClick={run} disabled={busy || !configured} className="rounded-lg border border-[#7c3aed]/30 bg-[#7c3aed]/15 px-2.5 py-1 text-[10px] font-semibold text-pulse-200 disabled:opacity-40">
+        <button onClick={run} disabled={busy || !configured || !aiEnabled} className="rounded-lg border border-[#7c3aed]/30 bg-[#7c3aed]/15 px-2.5 py-1 text-[10px] font-semibold text-pulse-200 disabled:opacity-40">
           {busy ? 'Analyzing…' : analysis ? 'Re-analyze' : 'Analyze with AI'}
         </button>
       </div>
 
       {!configured && <p className="mt-2 text-[11px] text-ink-500">Connect Supabase and deploy the ai-decision-summary function to enable this.</p>}
+      {configured && !aiEnabled && <p className="mt-2 text-[11px] text-alert-300">AI features are turned off for this workspace — an admin can re-enable them in Settings &gt; AI Settings.</p>}
       {error && <p className="mt-2 text-xs text-ember-400">{error}</p>}
 
       {analysis ? (

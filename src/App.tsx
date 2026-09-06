@@ -21,7 +21,7 @@ import { AuditLogView } from '@/components/views/AuditLogView';
 import { IntegrationsView } from '@/components/views/IntegrationsView';
 import { NotificationsView } from '@/components/views/NotificationsView';
 import { InvitationsView } from '@/components/views/InvitationsView';
-import { SettingsView } from '@/components/views/SettingsView';
+import { SettingsHub } from '@/components/settings/SettingsHub';
 import { HelpView } from '@/components/views/HelpView';
 import { ComingSoonView } from '@/components/views/ComingSoonView';
 import { DecisionsListView } from '@/components/decisions/DecisionsListView';
@@ -37,7 +37,7 @@ import { activePolls as demoPolls, topicNodes as demoTopics } from '@/data';
 import {
   getCurrentWorkspace, getWorkspaceById, loadWorkspaceData, sendMessage, createWorkspace,
   listWorkspaceMembers, listWorkspaceInvites, listDecisions, createDecision, loadDashboardData,
-  listMyWorkspaces, listActions, computeRisks, isPlatformAdmin, logProductEvent,
+  listMyWorkspaces, listActions, computeRisks, isPlatformAdmin, logProductEvent, getWorkspaceGeneral,
   type WorkspaceMember, type DashboardData,
 } from '@/lib/pulseApi';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
@@ -136,6 +136,7 @@ function AppShell() {
   const [pendingInviteCount, setPendingInviteCount] = useState(0);
   const [myOpenActionCount, setMyOpenActionCount] = useState(0);
   const [riskCount, setRiskCount] = useState(0);
+  const [aiEnabled, setAiEnabled] = useState(true);
   const [dashboard, setDashboard] = useState<DashboardData>({ waitingForYou: [], decidedByYou: [], upcomingDeadlines: [], teamActivity: [] });
 
   const [view, setView] = useState<AppView>('dashboard');
@@ -172,8 +173,9 @@ function AppShell() {
     setWorkspace(ws);
     if (!ws) return;
     localStorage.setItem(ACTIVE_WORKSPACE_KEY, ws.id);
-    const m = await listWorkspaceMembers(ws.id);
+    const [m, general] = await Promise.all([listWorkspaceMembers(ws.id), getWorkspaceGeneral(ws.id)]);
     setMembers(m);
+    setAiEnabled(general?.aiEnabled ?? true);
     await refreshWorkspaceData(ws.id);
   }, [refreshWorkspaceData]);
 
@@ -336,20 +338,30 @@ function AppShell() {
         {view === 'resources' && !workspace && <ComingSoonView icon={FolderOpen} phase="Connect Supabase" title="Resources need a workspace" description="Sign in and create a workspace to store real resources." />}
         {view === 'actions' && workspace && <ActionsView workspaceId={workspace.id} members={members} />}
         {view === 'actions' && !workspace && <ComingSoonView icon={Sparkles} phase="Connect Supabase" title="Actions need a workspace" description="Sign in and create a workspace to create and track real actions." />}
-        {view === 'pulse-ai' && workspace && <PulseAIView workspaceId={workspace.id} />}
+        {view === 'pulse-ai' && workspace && <PulseAIView workspaceId={workspace.id} aiEnabled={aiEnabled} />}
         {view === 'pulse-ai' && !workspace && <ComingSoonView icon={Sparkles} phase="Connect Supabase" title="PULSE AI needs a workspace" description="Sign in and create a workspace, then deploy the pulse-assistant function." />}
         {view === 'risks' && workspace && <RiskCenterView workspaceId={workspace.id} />}
         {view === 'risks' && !workspace && <ComingSoonView icon={Sparkles} phase="Connect Supabase" title="Risk Center needs a workspace" description="Risk detection runs against your real discussions, votes, and actions." />}
         {view === 'analytics' && workspace && <AnalyticsView workspaceId={workspace.id} />}
         {view === 'analytics' && !workspace && <ComingSoonView icon={Sparkles} phase="Connect Supabase" title="Analytics needs a workspace" description="Every number here is computed from your real workspace activity." />}
-        {view === 'meeting-summaries' && workspace && <MeetingSummariesView workspaceId={workspace.id} />}
+        {view === 'meeting-summaries' && workspace && <MeetingSummariesView workspaceId={workspace.id} aiEnabled={aiEnabled} />}
         {view === 'meeting-summaries' && !workspace && <ComingSoonView icon={Sparkles} phase="Connect Supabase" title="Meeting Summaries need a workspace" description="Sign in and create a workspace, then deploy the meeting-summary function." />}
         {view === 'team' && workspace && <TeamView workspaceId={workspace.id} />}
         {view === 'notifications' && <NotificationsView activity={dashboard.teamActivity} />}
         {view === 'invitations' && workspace && <InvitationsView workspaceId={workspace.id} />}
         {view === 'audit-log' && workspace && <AuditLogView workspaceId={workspace.id} />}
         {view === 'audit-log' && !workspace && <ComingSoonView icon={Sparkles} phase="Connect Supabase" title="Audit Log needs a workspace" description="Every role change, invite, and decision outcome is logged automatically once you're connected." />}
-        {view === 'settings' && workspace && <SettingsView workspaceId={workspace.id} workspaceName={workspace.name} workspaceRole={workspaceRole} isAdmin={isAdmin} />}
+        {view === 'settings' && workspace && (
+          <SettingsHub
+            workspaceId={workspace.id}
+            workspaceName={workspace.name}
+            workspaceRole={workspaceRole}
+            isAdmin={isAdmin}
+            isOwner={workspaceRole === 'owner'}
+            onNavigateApp={setView}
+            onWorkspaceRenamed={(name) => setWorkspace((w) => (w ? { ...w, name } : w))}
+          />
+        )}
         {view === 'integrations' && workspace && <IntegrationsView workspaceId={workspace.id} isAdmin={isAdmin} />}
         {view === 'integrations' && !workspace && <ComingSoonView icon={Sparkles} phase="Connect Supabase" title="Integrations need a workspace" description="Connect Slack and the rest once you're signed into a real workspace." />}
         {view === 'help' && <HelpView onOpenShortcuts={() => setShowShortcuts(true)} />}
@@ -404,6 +416,7 @@ function AppShell() {
           decisionId={activeDecisionId}
           members={members}
           isAdmin={isAdmin}
+          aiEnabled={aiEnabled}
           onClose={() => { setActiveDecisionId(null); if (workspace) refreshWorkspaceData(workspace.id); }}
         />
       )}

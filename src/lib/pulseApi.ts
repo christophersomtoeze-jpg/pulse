@@ -5,6 +5,7 @@ import type {
   WorkspaceAction, ActionStatus, ActionPriority, GlobalSearchResults,
   AssistantMessage, MeetingSummary, RiskItem, WorkspaceListItem, AuditLogEntry,
   AnalyticsSnapshot, WorkspaceSubscription, WorkspaceIntegration, IntegrationProvider, PlatformMetrics,
+  ProfileDetails, NotificationPreferences, LoginHistoryEntry, WorkspaceGeneralSettings, WorkspaceUsage,
 } from '@/types';
 import { supabase } from '@/lib/supabase';
 
@@ -453,6 +454,12 @@ export async function addDecisionComment(decisionId: string, authorId: string, b
     parent_comment_id: parentCommentId ?? null,
   });
   if (error) throw new Error(error.message);
+
+  const others = mentionedUserIds.filter((id) => id !== authorId);
+  if (others.length > 0) {
+    const { data: author } = await supabase.from('profiles').select('full_name').eq('id', authorId).maybeSingle();
+    await Promise.all(others.map((id) => notifyMentioned(id, author?.full_name ?? 'A teammate', body.slice(0, 140))));
+  }
 }
 
 // ---- Voting ----
@@ -690,7 +697,12 @@ export async function createAction(workspaceId: string, input: CreateActionInput
     .select(ACTION_SELECT)
     .single();
   if (error) throw new Error(error.message);
-  return mapActionRow(data as unknown as ActionRow);
+  const created = mapActionRow(data as unknown as ActionRow);
+  if (created.ownerId && created.ownerId !== createdBy) {
+    const { data: ws } = await supabase.from('workspaces').select('name').eq('id', workspaceId).maybeSingle();
+    await notifyActionAssigned(created.ownerId, created.title, ws?.name ?? 'your workspace');
+  }
+  return created;
 }
 
 export async function updateActionStatus(actionId: string, status: ActionStatus) {
@@ -1052,4 +1064,186 @@ export async function getPlatformMetrics(): Promise<PlatformMetrics | null> {
 export async function logProductEvent(eventName: string, workspaceId?: string | null, metadata?: Record<string, unknown>) {
   if (!supabase) return;
   await supabase.rpc('log_product_event', { p_event_name: eventName, p_workspace_id: workspaceId ?? null, p_metadata: metadata ?? {} });
+}
+
+// ============================================================================
+// Account settings
+// ============================================================================
+
+export async function getMyProfile(userId: string): Promise<ProfileDetails | null> {
+  if (!supabase) return null;
+  const { data, error } = await supabase.from('profiles').select('full_name,email,phone,bio,avatar_url').eq('id', userId).maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!data) return null;
+  return { fullName: data.full_name, email: data.email ?? '', phone: data.phone ?? '', bio: data.bio ?? '', avatarUrl: data.avatar_url };
+}
+
+export async function updateMyProfile(userId: string, updates: { fullName?: string; phone?: string; bio?: string; avatarUrl?: string }) {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const { error } = await supabase.from('profiles').update({
+    ...(updates.fullName !== undefined ? { full_name: updates.fullName } : {}),
+    ...(updates.phone !== undefined ? { phone: updates.phone } : {}),
+    ...(updates.bio !== undefined ? { bio: updates.bio } : {}),
+    ...(updates.avatarUrl !== undefined ? { avatar_url: updates.avatarUrl } : {}),
+    updated_at: new Date().toISOString(),
+  }).eq('id', userId);
+  if (error) throw new Error(error.message);
+}
+
+/** Triggers Supabase's email-change confirmation flow (an email is sent to confirm). */
+export async function changeMyEmail(newEmail: string) {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const { error } = await supabase.auth.updateUser({ email: newEmail });
+  if (error) throw new Error(error.message);
+}
+
+export async function changeMyPassword(newPassword: string) {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const { error } = await supabase.auth.updateUser({ password: newPassword });
+  if (error) throw new Error(error.message);
+}
+
+export async function sendPasswordResetEmail(email: string) {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: window.location.origin });
+  if (error) throw new Error(error.message);
+}
+
+/** Signs out every OTHER session for this user, leaving the current device signed in. */
+export async function signOutOtherDevices() {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const { error } = await supabase.auth.signOut({ scope: 'others' });
+  if (error) throw new Error(error.message);
+}
+
+export async function recordLogin(userId: string) {
+  if (!supabase) return;
+  await supabase.from('login_history').insert({ user_id: userId, user_agent: navigator.userAgent });
+}
+
+export async function listLoginHistory(userId: string): Promise<LoginHistoryEntry[]> {
+  if (!supabase) return [];
+  const { data, error } = await supabase.from('login_history').select('id,user_agent,created_at').eq('user_id', userId).order('created_at', { ascending: false }).limit(20);
+  if (error) throw new Error(error.message);
+  return (data ?? []).map((row) => ({ id: row.id, userAgent: row.user_agent, createdAt: row.created_at }));
+}
+
+export async function deleteMyAccount(): Promise<{ error: string | null }> {
+  if (!supabase) return { error: 'Supabase is not configured.' };
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session) return { error: 'Not signed in.' };
+  const { data, error } = await supabase.functions.invoke('delete-account', {});
+  if (error) return { error: error.message };
+  if (data?.error) return { error: data.error };
+  return { error: null };
+}
+
+/** Gathers everything the user owns/authored across their workspaces into one JSON export. */
+export async function exportMyData(userId: string): Promise<Record<string, unknown>> {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const [profile, workspaces, decisions, comments, votes, actions] = await Promise.all([
+    supabase.from('profiles').select('*').eq('id', userId).maybeSingle(),
+    supabase.from('workspace_members').select('role,workspaces(id,name)').eq('user_id', userId),
+    supabase.from('decisions').select('*').eq('created_by', userId),
+    supabase.from('decision_comments').select('*').eq('author_id', userId),
+    supabase.from('decision_votes').select('*').eq('user_id', userId),
+    supabase.from('actions').select('*').eq('owner_id', userId),
+  ]);
+  return {
+    exportedAt: new Date().toISOString(),
+    profile: profile.data ?? null,
+    workspaces: workspaces.data ?? [],
+    decisionsCreated: decisions.data ?? [],
+    comments: comments.data ?? [],
+    votes: votes.data ?? [],
+    actionsAssigned: actions.data ?? [],
+  };
+}
+
+// ============================================================================
+// Notification preferences
+// ============================================================================
+
+export async function getNotificationPreferences(userId: string): Promise<NotificationPreferences> {
+  const fallback: NotificationPreferences = { emailEnabled: true, notifyMentions: true, notifyDecisions: true, notifyActions: true, notifyInvitations: true, digestFrequency: 'weekly' };
+  if (!supabase) return fallback;
+  const { data, error } = await supabase.from('notification_preferences').select('*').eq('user_id', userId).maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!data) return fallback;
+  return {
+    emailEnabled: data.email_enabled, notifyMentions: data.notify_mentions, notifyDecisions: data.notify_decisions,
+    notifyActions: data.notify_actions, notifyInvitations: data.notify_invitations, digestFrequency: data.digest_frequency,
+  };
+}
+
+export async function updateNotificationPreferences(userId: string, prefs: NotificationPreferences) {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const { error } = await supabase.from('notification_preferences').upsert({
+    user_id: userId, email_enabled: prefs.emailEnabled, notify_mentions: prefs.notifyMentions, notify_decisions: prefs.notifyDecisions,
+    notify_actions: prefs.notifyActions, notify_invitations: prefs.notifyInvitations, digest_frequency: prefs.digestFrequency,
+    updated_at: new Date().toISOString(),
+  });
+  if (error) throw new Error(error.message);
+}
+
+/** Fire-and-forget: sends a real notification email, silently doing nothing if the recipient turned that category off. */
+async function notifyByEmail(userId: string, category: 'mentions' | 'decisions' | 'actions' | 'invitations', subject: string, heading: string, body: string) {
+  if (!supabase) return;
+  try { await supabase.functions.invoke('send-notification-email', { body: { userId, category, subject, heading, body } }); }
+  catch { /* best-effort — a failed notification email should never block the underlying action */ }
+}
+
+export async function notifyActionAssigned(ownerId: string, actionTitle: string, workspaceName: string) {
+  await notifyByEmail(ownerId, 'actions', `New action assigned: ${actionTitle}`, 'You\'ve been assigned an action', `You were assigned "${actionTitle}" in ${workspaceName}.`);
+}
+
+export async function notifyMentioned(mentionedUserId: string, mentionerName: string, context: string) {
+  await notifyByEmail(mentionedUserId, 'mentions', `${mentionerName} mentioned you`, 'You were mentioned', `${mentionerName} mentioned you: "${context}"`);
+}
+
+// ============================================================================
+// Workspace general settings + usage
+// ============================================================================
+
+export async function getWorkspaceGeneral(workspaceId: string): Promise<WorkspaceGeneralSettings | null> {
+  if (!supabase) return null;
+  const { data, error } = await supabase.from('workspaces').select('name,description,ai_enabled,default_language,timezone').eq('id', workspaceId).maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!data) return null;
+  return { name: data.name, description: data.description ?? '', aiEnabled: data.ai_enabled, defaultLanguage: data.default_language, timezone: data.timezone };
+}
+
+export async function updateWorkspaceGeneral(workspaceId: string, updates: Partial<{ name: string; description: string; aiEnabled: boolean; defaultLanguage: string; timezone: string }>) {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const { error } = await supabase.from('workspaces').update({
+    ...(updates.name !== undefined ? { name: updates.name } : {}),
+    ...(updates.description !== undefined ? { description: updates.description } : {}),
+    ...(updates.aiEnabled !== undefined ? { ai_enabled: updates.aiEnabled } : {}),
+    ...(updates.defaultLanguage !== undefined ? { default_language: updates.defaultLanguage } : {}),
+    ...(updates.timezone !== undefined ? { timezone: updates.timezone } : {}),
+    updated_at: new Date().toISOString(),
+  }).eq('id', workspaceId);
+  if (error) throw new Error(error.message);
+}
+
+export async function deleteWorkspace(workspaceId: string) {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const { error } = await supabase.from('workspaces').delete().eq('id', workspaceId);
+  if (error) throw new Error(error.message);
+}
+
+export async function getWorkspaceUsage(workspaceId: string): Promise<WorkspaceUsage> {
+  const empty: WorkspaceUsage = { activeMembers: 0, discussionsCreated: 0, decisionsMade: 0, pollsCreated: 0, aiAnalysesRun: 0 };
+  if (!supabase) return empty;
+  const [members, discussions, decisions, polls, ai] = await Promise.all([
+    supabase.from('workspace_members').select('*', { count: 'exact', head: true }).eq('workspace_id', workspaceId),
+    supabase.from('discussions').select('*', { count: 'exact', head: true }).eq('workspace_id', workspaceId),
+    supabase.from('decisions').select('*', { count: 'exact', head: true }).eq('workspace_id', workspaceId),
+    supabase.from('polls').select('*', { count: 'exact', head: true }).eq('workspace_id', workspaceId),
+    supabase.from('decision_ai_analyses').select('id,decisions!inner(workspace_id)', { count: 'exact', head: true }).eq('decisions.workspace_id', workspaceId),
+  ]);
+  return {
+    activeMembers: members.count ?? 0, discussionsCreated: discussions.count ?? 0, decisionsMade: decisions.count ?? 0,
+    pollsCreated: polls.count ?? 0, aiAnalysesRun: ai.count ?? 0,
+  };
 }
