@@ -2,7 +2,7 @@ import { useState } from 'react';
 import {
   Activity, BarChart3, Bell, CheckSquare, ChevronDown, ClipboardList, Folder, HelpCircle,
   History, Home, Keyboard, LayoutGrid, MessageCircle, MoreVertical, Plug, PanelLeftClose,
-  PanelLeftOpen, PieChart, Settings, ShieldAlert, Sparkles, UserPlus, Users,
+  PanelLeftOpen, PieChart, Settings, ShieldAlert, Sparkles, TrendingUp, UserPlus, Users,
 } from 'lucide-react';
 import { useAuth } from '@/auth/AuthProvider';
 import type { AppView } from '@/lib/viewTypes';
@@ -56,6 +56,7 @@ interface SidebarProps {
   collapsed: boolean;
   onToggleCollapsed: () => void;
   onOpenShortcuts: () => void;
+  isPlatformAdmin?: boolean;
 }
 
 function NavSection({ title, items, view, onNavigate, badges, collapsed }: {
@@ -96,7 +97,7 @@ function NavSection({ title, items, view, onNavigate, badges, collapsed }: {
   );
 }
 
-export function Sidebar({ view, onNavigate, workspaceName, workspaceRole, workspaces, activeWorkspaceId, onSwitchWorkspace, onCreateWorkspace, badges, collapsed, onToggleCollapsed, onOpenShortcuts }: SidebarProps) {
+export function Sidebar({ view, onNavigate, workspaceName, workspaceRole, workspaces, activeWorkspaceId, onSwitchWorkspace, onCreateWorkspace, badges, collapsed, onToggleCollapsed, onOpenShortcuts, isPlatformAdmin }: SidebarProps) {
   const { user, signOut } = useAuth();
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
@@ -152,6 +153,11 @@ export function Sidebar({ view, onNavigate, workspaceName, workspaceRole, worksp
         )}
 
         <NavSection title="Tools" items={toolItems} view={view} onNavigate={onNavigate} badges={badges} collapsed={collapsed} />
+        {isPlatformAdmin && !collapsed && (
+          <button onClick={() => onNavigate('platform-metrics')} className={`mt-0.5 flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium ${view === 'platform-metrics' ? 'bg-[#7c3aed]/15 text-pulse-200' : 'text-ink-400 hover:bg-white/5 hover:text-ink-100'}`}>
+            <TrendingUp className="h-4 w-4" /> Platform Metrics
+          </button>
+        )}
         {!collapsed && (
           <button onClick={onOpenShortcuts} className="mt-0.5 flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-ink-400 hover:bg-white/5 hover:text-ink-100">
             <Keyboard className="h-4 w-4" /> Keyboard Shortcuts

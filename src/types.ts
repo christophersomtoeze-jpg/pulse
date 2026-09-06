@@ -215,3 +215,14 @@ export interface WorkspaceIntegration {
   status: 'connected' | 'disconnected';
   connectedAt: string | null;
 }
+
+// ---- Founder traction metrics ----
+export interface PlatformMetrics {
+  totalWorkspaces: number;
+  totalUsers: number;
+  decisionsCreated7d: number;
+  decisionsCreated30d: number;
+  votesCast7d: number;
+  discussionsCreated7d: number;
+  weeklyActiveUsers: number;
+}

@@ -4,7 +4,7 @@ import type {
   DecisionOutcome, DecisionResource, DecisionSummary, DecisionVoteTally, VoteChoice,
   WorkspaceAction, ActionStatus, ActionPriority, GlobalSearchResults,
   AssistantMessage, MeetingSummary, RiskItem, WorkspaceListItem, AuditLogEntry,
-  AnalyticsSnapshot, WorkspaceSubscription, WorkspaceIntegration, IntegrationProvider,
+  AnalyticsSnapshot, WorkspaceSubscription, WorkspaceIntegration, IntegrationProvider, PlatformMetrics,
 } from '@/types';
 import { supabase } from '@/lib/supabase';
 
@@ -1013,4 +1013,43 @@ export async function disconnectIntegration(workspaceId: string, provider: Integ
   if (!supabase) throw new Error('Supabase is not configured.');
   const { error } = await supabase.from('workspace_integrations').update({ status: 'disconnected', access_token: null }).eq('workspace_id', workspaceId).eq('provider', provider);
   if (error) throw new Error(error.message);
+}
+
+export async function hasCastAnyVote(userId: string): Promise<boolean> {
+  if (!supabase) return false;
+  const { count } = await supabase.from('decision_votes').select('*', { count: 'exact', head: true }).eq('user_id', userId);
+  return (count ?? 0) > 0;
+}
+
+// ============================================================================
+// Founder traction metrics (platform admins only — see schema.sql platform_admins)
+// ============================================================================
+
+export async function isPlatformAdmin(): Promise<boolean> {
+  if (!supabase) return false;
+  const { data, error } = await supabase.rpc('is_platform_admin');
+  if (error) return false;
+  return Boolean(data);
+}
+
+export async function getPlatformMetrics(): Promise<PlatformMetrics | null> {
+  if (!supabase) return null;
+  const { data, error } = await supabase.rpc('get_platform_metrics');
+  if (error) throw new Error(error.message);
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row) return null;
+  return {
+    totalWorkspaces: Number(row.total_workspaces ?? 0),
+    totalUsers: Number(row.total_users ?? 0),
+    decisionsCreated7d: Number(row.decisions_created_7d ?? 0),
+    decisionsCreated30d: Number(row.decisions_created_30d ?? 0),
+    votesCast7d: Number(row.votes_cast_7d ?? 0),
+    discussionsCreated7d: Number(row.discussions_created_7d ?? 0),
+    weeklyActiveUsers: Number(row.weekly_active_users ?? 0),
+  };
+}
+
+export async function logProductEvent(eventName: string, workspaceId?: string | null, metadata?: Record<string, unknown>) {
+  if (!supabase) return;
+  await supabase.rpc('log_product_event', { p_event_name: eventName, p_workspace_id: workspaceId ?? null, p_metadata: metadata ?? {} });
 }

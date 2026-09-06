@@ -6,7 +6,7 @@ import { supabase } from '@/lib/supabase';
 import {
   addDecisionComment, addDecisionResource, castDecisionVote, createAction, getDecision, getDecisionVoteTally,
   getLatestAIAnalysis, listActions, listDecisionComments, listDecisionHistory, listDecisionResources,
-  requestAIAnalysis, setDecisionOutcome, type WorkspaceMember,
+  logProductEvent, requestAIAnalysis, setDecisionOutcome, type WorkspaceMember,
 } from '@/lib/pulseApi';
 import type {
   DecisionAIAnalysis, DecisionComment, DecisionHistoryEntry, DecisionOutcome,
@@ -182,7 +182,7 @@ export function DecisionRoom({ decisionId, members, isAdmin, onClose }: Decision
               </div>
             </div>
 
-            <VotingPanel tally={tally} onVote={async (choice: VoteChoice, anon) => { await castDecisionVote(decision.id, choice, anon); load(); }} />
+            <VotingPanel tally={tally} onVote={async (choice: VoteChoice, anon) => { await castDecisionVote(decision.id, choice, anon); await logProductEvent('vote_cast', decision.workspaceId); load(); }} />
 
             <AIInsightPanel
               analysis={analysis}

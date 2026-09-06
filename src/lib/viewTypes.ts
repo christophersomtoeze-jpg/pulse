@@ -15,4 +15,5 @@ export type AppView =
   | 'audit-log'
   | 'settings'
   | 'integrations'
-  | 'help';
+  | 'help'
+  | 'platform-metrics';

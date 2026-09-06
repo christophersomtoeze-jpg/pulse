@@ -28,12 +28,17 @@ import { DecisionsListView } from '@/components/decisions/DecisionsListView';
 import { NewDecisionModal } from '@/components/decisions/NewDecisionModal';
 import { DecisionRoom } from '@/components/decisions/DecisionRoom';
 import { KeyboardShortcutsModal } from '@/components/KeyboardShortcutsModal';
+import { OnboardingChecklist } from '@/components/home/OnboardingChecklist';
+import { PlatformMetricsView } from '@/components/views/PlatformMetricsView';
+import { TermsPage } from '@/components/legal/TermsPage';
+import { PrivacyPage } from '@/components/legal/PrivacyPage';
 import type { AppView } from '@/lib/viewTypes';
 import { activePolls as demoPolls, topicNodes as demoTopics } from '@/data';
 import {
   getCurrentWorkspace, getWorkspaceById, loadWorkspaceData, sendMessage, createWorkspace,
   listWorkspaceMembers, listWorkspaceInvites, listDecisions, createDecision, loadDashboardData,
-  listMyWorkspaces, listActions, computeRisks, type WorkspaceMember, type DashboardData,
+  listMyWorkspaces, listActions, computeRisks, isPlatformAdmin, logProductEvent,
+  type WorkspaceMember, type DashboardData,
 } from '@/lib/pulseApi';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 import type { ActivePoll, DecisionSummary, IntentWave, TopicNode, WorkspaceListItem } from '@/types';
@@ -122,6 +127,7 @@ function DiscussionDrawer({ topic, onClose, onSend, busy, message, setMessage, i
 function AppShell() {
   const { user } = useAuth();
   const [workspace, setWorkspace] = useState<{ id: string; name: string; memberCount: number } | null>(null);
+  const [platformAdmin, setPlatformAdmin] = useState(false);
   const [workspaces, setWorkspaces] = useState<WorkspaceListItem[]>([]);
   const [topics, setTopics] = useState<TopicNode[]>(demoTopics);
   const [polls, setPolls] = useState<ActivePoll[]>(demoPolls);
@@ -181,6 +187,11 @@ function AppShell() {
       await loadWorkspaceById(target.id);
     }).catch((e) => setError(e instanceof Error ? e.message : 'Could not load workspace'));
   }, [user, loadWorkspaceById]);
+
+  useEffect(() => {
+    if (!user || !isSupabaseConfigured) return;
+    isPlatformAdmin().then(setPlatformAdmin).catch(() => setPlatformAdmin(false));
+  }, [user]);
 
   useEffect(() => {
     if (!supabase || !workspace) return;
@@ -267,6 +278,7 @@ function AppShell() {
         collapsed={sidebarCollapsed}
         onToggleCollapsed={() => setSidebarCollapsed((v) => !v)}
         onOpenShortcuts={() => setShowShortcuts(true)}
+        isPlatformAdmin={platformAdmin}
       />
 
       <div className="relative min-h-screen flex-1 overflow-x-hidden pb-24 lg:pb-8">
@@ -293,6 +305,16 @@ function AppShell() {
           {notice && <div className="mb-3 rounded-xl border border-alert-500/30 bg-alert-500/10 p-3 text-xs text-alert-300">{notice}</div>}
         </div>
 
+        {(view === 'dashboard' || view === 'discussions') && workspace && (
+          <OnboardingChecklist
+            workspaceId={workspace.id}
+            decisions={decisions}
+            memberCount={members.length}
+            pendingInviteCount={pendingInviteCount}
+            onNewDecision={() => setShowNewDecision(true)}
+            onInvite={() => setView('invitations')}
+          />
+        )}
         {(view === 'dashboard' || view === 'discussions') && (
           <HomeFeed
             topics={topics}
@@ -305,6 +327,7 @@ function AppShell() {
             onOpenResourceHub={() => setView('resources')}
           />
         )}
+        {view === 'platform-metrics' && platformAdmin && <PlatformMetricsView />}
         {view === 'decisions' && workspace && <DecisionsListView workspaceId={workspace.id} decisions={decisions} onOpen={openDecision} onNew={() => setShowNewDecision(true)} />}
         {view === 'decisions' && !workspace && <DecisionsListView workspaceId="demo" decisions={decisions} onOpen={openDecision} onNew={() => setShowNewDecision(true)} />}
         {view === 'polls' && workspace && <PollsView workspaceId={workspace.id} polls={polls} onRefresh={() => refreshWorkspaceData(workspace.id)} />}
@@ -341,6 +364,7 @@ function AppShell() {
         badges={badges}
         onClose={() => setNavOpen(false)}
         onNavigate={setView}
+        isPlatformAdmin={platformAdmin}
       />
 
       <GlobalSearchModal open={globalSearchOpen} workspaceId={workspace?.id ?? null} onClose={() => setGlobalSearchOpen(false)} onNavigate={setView} />
@@ -368,6 +392,7 @@ function AppShell() {
         onCreate={async (input) => {
           if (!workspace || !user) { setNotice('Connect Supabase and sign in to create real decisions — this is demo data.'); return; }
           await createDecision({ workspaceId: workspace.id, ...input }, user.id);
+          await logProductEvent('decision_created', workspace.id);
           await refreshWorkspaceData(workspace.id);
         }}
       />
@@ -404,4 +429,9 @@ function AppInner() {
   return <AppShell />;
 }
 
-export default function App() { return <AuthProvider><AppInner /></AuthProvider>; }
+export default function App() {
+  const path = window.location.pathname;
+  if (path === '/terms') return <TermsPage />;
+  if (path === '/privacy') return <PrivacyPage />;
+  return <AuthProvider><AppInner /></AuthProvider>;
+}

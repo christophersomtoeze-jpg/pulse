@@ -65,3 +65,17 @@ Teams, Google, Microsoft 365, Jira, and Notion are **not** built yet — they sh
 
 ## Security note on integration tokens
 `workspace_integrations.access_token` is currently stored in plaintext in Postgres. Before connecting a real Slack workspace (or any future integration) in production, move this column to use Supabase Vault (pgsodium) so tokens are encrypted at rest. This wasn't set up here because it requires an extra one-time `vault` extension setup step in your specific project — flagging it explicitly rather than silently shipping plaintext secrets.
+
+## Founder Metrics (Platform Metrics in the sidebar)
+This is visible only to you, never to workspace members. After running the latest `schema.sql`, make yourself a platform admin (run once, in SQL Editor, replacing the email):
+```sql
+insert into public.platform_admins (user_id)
+select id from public.profiles where email = 'you@yourcompany.com';
+```
+"Platform Metrics" then appears at the bottom of your sidebar with real cross-workspace numbers (total workspaces, weekly active users, decisions/votes in the last 7-30 days) — the traction data investor conversations actually need.
+
+## Legal pages
+`/terms` and `/privacy` are now real pages, linked from the login screen. They're generic starter templates (clearly marked as such in the page) — have a lawyer review and customize them, especially the data-sharing section, before treating them as your real policies.
+
+## Onboarding
+Every new workspace now seeds a "Welcome to PULSE" discussion and a sample decision automatically — no code change needed, this is part of `schema.sql`. The onboarding checklist card on the home screen tracks real completion (first decision created, teammate invited, first vote cast) and dismisses itself once done or by hand.

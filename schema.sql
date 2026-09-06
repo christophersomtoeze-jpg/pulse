@@ -764,3 +764,109 @@ drop policy if exists pulse_media_delete_own on storage.objects;
 create policy pulse_media_delete_own on storage.objects for delete to authenticated using (bucket_id = 'pulse-media' and owner = auth.uid());
 
 notify pgrst, 'reload schema';
+
+-- ============================================================================
+-- Founder traction metrics — real usage data across the whole platform,
+-- visible only to you (added manually below), never to workspace members.
+-- ============================================================================
+create table if not exists public.platform_admins (
+  user_id uuid primary key references public.profiles(id) on delete cascade,
+  added_at timestamptz not null default now()
+);
+alter table public.platform_admins enable row level security;
+-- No select policy for regular users at all — only the service role (or a
+-- SECURITY DEFINER function, below) can ever read this table.
+
+create or replace function public.is_platform_admin() returns boolean language sql stable security definer set search_path = public as $$
+  select exists(select 1 from public.platform_admins where user_id = auth.uid());
+$$;
+
+create table if not exists public.product_events (
+  id uuid primary key default gen_random_uuid(),
+  event_name text not null,
+  workspace_id uuid references public.workspaces(id) on delete set null,
+  user_id uuid references public.profiles(id) on delete set null,
+  metadata jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now()
+);
+create index if not exists product_events_name_idx on public.product_events(event_name, created_at desc);
+alter table public.product_events enable row level security;
+drop policy if exists product_events_select_platform_admin on public.product_events;
+create policy product_events_select_platform_admin on public.product_events for select to authenticated using (public.is_platform_admin());
+-- No insert policy for the client — every event below is logged by a
+-- SECURITY DEFINER function or trigger, never by a direct client write.
+
+create or replace function public.log_product_event(p_event_name text, p_workspace_id uuid default null, p_metadata jsonb default '{}'::jsonb)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  insert into public.product_events (event_name, workspace_id, user_id, metadata)
+  values (p_event_name, p_workspace_id, auth.uid(), p_metadata);
+end;
+$$;
+grant execute on function public.log_product_event(text, uuid, jsonb) to authenticated;
+
+-- Log signup automatically — extends the existing handle_new_user trigger.
+create or replace function public.handle_new_user() returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  insert into public.profiles (id, full_name, email)
+  values (new.id, coalesce(new.raw_user_meta_data->>'full_name', 'PULSE Member'), lower(new.email))
+  on conflict (id) do update set email = excluded.email;
+  insert into public.product_events (event_name, user_id) values ('user_signed_up', new.id);
+  return new;
+end;
+$$;
+
+-- One aggregated RPC so the client never needs row-level access to product_events.
+create or replace function public.get_platform_metrics()
+returns table (
+  total_workspaces bigint, total_users bigint, decisions_created_7d bigint, decisions_created_30d bigint,
+  votes_cast_7d bigint, discussions_created_7d bigint, weekly_active_users bigint
+) language plpgsql security definer set search_path = public as $$
+begin
+  if not public.is_platform_admin() then raise exception 'Not authorized'; end if;
+  return query select
+    (select count(*) from public.workspaces),
+    (select count(*) from public.profiles),
+    (select count(*) from public.decisions where created_at >= now() - interval '7 days'),
+    (select count(*) from public.decisions where created_at >= now() - interval '30 days'),
+    (select count(*) from public.decision_votes where created_at >= now() - interval '7 days'),
+    (select count(*) from public.discussions where created_at >= now() - interval '7 days'),
+    (select count(distinct user_id) from public.product_events where created_at >= now() - interval '7 days' and user_id is not null);
+end;
+$$;
+grant execute on function public.get_platform_metrics() to authenticated;
+
+-- ============================================================================
+-- Onboarding — every new workspace gets real seeded content, never a blank canvas.
+-- ============================================================================
+create or replace function public.create_workspace_with_owner(workspace_name text, workspace_slug text)
+returns public.workspaces
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare new_workspace public.workspaces; welcome_discussion_id uuid;
+begin
+  if auth.uid() is null then raise exception 'Not authenticated'; end if;
+  insert into public.workspaces(name, slug, owner_id) values (workspace_name, workspace_slug, auth.uid()) returning * into new_workspace;
+  insert into public.workspace_members(workspace_id, user_id, role) values (new_workspace.id, auth.uid(), 'owner');
+
+  insert into public.discussions (workspace_id, title, summary, status, created_by)
+  values (new_workspace.id, 'Welcome to PULSE', 'A quick tour of how your team will think, decide, and move together.', 'active', auth.uid())
+  returning id into welcome_discussion_id;
+
+  insert into public.messages (discussion_id, author_id, body)
+  values (welcome_discussion_id, auth.uid(),
+    E'Welcome to ' || workspace_name || E'! Here''s the flow:\n1. Discuss something in a topic like this one.\n2. When it''s time to decide, turn it into a Decision — vote, discuss, and get an AI summary.\n3. Approve it and PULSE keeps the record forever, with any follow-up Actions attached.\n\nInvite your team from the sidebar to get started for real.');
+
+  insert into public.decisions (workspace_id, discussion_id, title, description, status, owner_id, created_by)
+  values (new_workspace.id, welcome_discussion_id, 'Sample decision: pick a name for our next project', 'This is a sample — vote on it, try the AI analysis, then create your own real decision.', 'in-review', auth.uid(), auth.uid());
+
+  perform public.log_product_event('workspace_created', new_workspace.id, jsonb_build_object('name', workspace_name));
+
+  return new_workspace;
+end;
+$$;
+grant execute on function public.create_workspace_with_owner(text,text) to authenticated;
+
+notify pgrst, 'reload schema';

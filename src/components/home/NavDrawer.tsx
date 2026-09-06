@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'framer-motion';
-import { Activity, LogOut, X } from 'lucide-react';
+import { Activity, LogOut, TrendingUp, X } from 'lucide-react';
 import { useAuth } from '@/auth/AuthProvider';
 import type { AppView } from '@/lib/viewTypes';
 import { intelligenceItems, teamItems, toolItems, workspaceItems, type NavItem } from '@/components/layout/Sidebar';
@@ -11,6 +11,7 @@ interface NavDrawerProps {
   badges: { actions: number; risks: number; notifications: number; invitations: number };
   onClose: () => void;
   onNavigate: (view: AppView) => void;
+  isPlatformAdmin?: boolean;
 }
 
 function badgeFor(id: AppView, badges: NavDrawerProps['badges']): number {
@@ -47,7 +48,7 @@ function Section({ title, items, view, badges, onNavigate }: { title: string; it
   );
 }
 
-export function NavDrawer({ open, view, workspaceName, badges, onClose, onNavigate }: NavDrawerProps) {
+export function NavDrawer({ open, view, workspaceName, badges, onClose, onNavigate, isPlatformAdmin }: NavDrawerProps) {
   const { user, signOut } = useAuth();
 
   return (
@@ -81,6 +82,14 @@ export function NavDrawer({ open, view, workspaceName, badges, onClose, onNaviga
               <Section title="Intelligence" items={intelligenceItems} view={view} badges={badges} onNavigate={(v) => { onNavigate(v); onClose(); }} />
               <Section title="Team" items={teamItems} view={view} badges={badges} onNavigate={(v) => { onNavigate(v); onClose(); }} />
               <Section title="Tools" items={toolItems} view={view} badges={badges} onNavigate={(v) => { onNavigate(v); onClose(); }} />
+              {isPlatformAdmin && (
+                <button
+                  onClick={() => { onNavigate('platform-metrics'); onClose(); }}
+                  className={`mt-1 flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium ${view === 'platform-metrics' ? 'bg-[#7c3aed]/15 text-pulse-200 border border-[#7c3aed]/30' : 'text-ink-300 hover:bg-white/5'}`}
+                >
+                  <TrendingUp className="h-4 w-4" /> Platform Metrics
+                </button>
+              )}
             </nav>
 
             <div className="border-t border-white/5 pt-3">

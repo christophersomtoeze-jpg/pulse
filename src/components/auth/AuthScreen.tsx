@@ -165,6 +165,9 @@ export function AuthScreen() {
               {mode === 'login' ? 'Create one' : 'Sign in'}
             </button>
           </p>
+          <p className="mt-4 text-center text-xs text-ink-600">
+            By continuing you agree to our <a href="/terms" className="underline hover:text-ink-400">Terms</a> and <a href="/privacy" className="underline hover:text-ink-400">Privacy Policy</a>.
+          </p>
         </div>
       </div>
     </div>
