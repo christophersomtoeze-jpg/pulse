@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { AlertTriangle, Download, Trash2 } from 'lucide-react';
 import { useAuth } from '@/auth/AuthProvider';
-import { deleteMyAccount, deleteWorkspace, exportMyData } from '@/lib/pulseApi';
+import { deleteMyAccount, deleteWorkspace, exportMyData, getDataRetentionDays, setDataRetentionDays } from '@/lib/pulseApi';
 
 function downloadJson(data: unknown, filename: string) {
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
@@ -9,6 +9,40 @@ function downloadJson(data: unknown, filename: string) {
   const a = document.createElement('a');
   a.href = url; a.download = filename; a.click();
   URL.revokeObjectURL(url);
+}
+
+function RetentionSection({ workspaceId, isOwner }: { workspaceId: string; isOwner: boolean }) {
+  const [days, setDays] = useState<number | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState('');
+
+  useEffect(() => { getDataRetentionDays(workspaceId).then(setDays); }, [workspaceId]);
+
+  const save = async (value: number | null) => {
+    setDays(value); setBusy(true);
+    try { await setDataRetentionDays(workspaceId, value); setNotice('Saved.'); setTimeout(() => setNotice(''), 1500); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <section className="glass rounded-2xl p-4">
+      <h2 className="text-sm font-semibold">Data retention</h2>
+      <p className="mt-1 text-xs text-ink-500">Auto-archives Discussions (chat) after this many days of inactivity. Decisions are never auto-cleaned — they're PULSE's permanent record by design.</p>
+      <select
+        value={days ?? ''}
+        disabled={!isOwner || busy}
+        onChange={(e) => save(e.target.value ? Number(e.target.value) : null)}
+        className="field mt-3 disabled:opacity-60"
+      >
+        <option value="">Keep forever</option>
+        <option value="90">Archive after 90 days</option>
+        <option value="180">Archive after 180 days</option>
+        <option value="365">Archive after 1 year</option>
+      </select>
+      {notice && <p className="mt-2 text-xs text-flux-400">{notice}</p>}
+      {!isOwner && <p className="mt-2 text-[11px] text-ink-600">Only the workspace owner can change this.</p>}
+    </section>
+  );
 }
 
 export function DataPrivacyPanel({ workspaceId, workspaceName, isOwner }: { workspaceId: string; workspaceName: string; isOwner: boolean }) {
@@ -49,6 +83,8 @@ export function DataPrivacyPanel({ workspaceId, workspaceName, isOwner }: { work
         <p className="mt-1 text-xs text-ink-500">Every decision, comment, vote, and action you've created, as a JSON file.</p>
         <button onClick={exportData} disabled={exporting} className="primary-btn mt-3 disabled:opacity-40">{exporting ? 'Preparing export…' : 'Export my data'}</button>
       </section>
+
+      <RetentionSection workspaceId={workspaceId} isOwner={isOwner} />
 
       {isOwner && (
         <section className="rounded-2xl border border-ember-500/30 bg-ember-500/5 p-4">

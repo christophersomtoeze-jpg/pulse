@@ -6,6 +6,7 @@ import type {
   AssistantMessage, MeetingSummary, RiskItem, WorkspaceListItem, AuditLogEntry,
   AnalyticsSnapshot, WorkspaceSubscription, WorkspaceIntegration, IntegrationProvider, PlatformMetrics,
   ProfileDetails, NotificationPreferences, LoginHistoryEntry, WorkspaceGeneralSettings, WorkspaceUsage,
+  ApiKeySummary, IncomingWebhookSummary,
 } from '@/types';
 import { supabase } from '@/lib/supabase';
 
@@ -1165,13 +1166,13 @@ export async function exportMyData(userId: string): Promise<Record<string, unkno
 // ============================================================================
 
 export async function getNotificationPreferences(userId: string): Promise<NotificationPreferences> {
-  const fallback: NotificationPreferences = { emailEnabled: true, notifyMentions: true, notifyDecisions: true, notifyActions: true, notifyInvitations: true, digestFrequency: 'weekly' };
+  const fallback: NotificationPreferences = { emailEnabled: true, pushEnabled: true, notifyMentions: true, notifyDecisions: true, notifyActions: true, notifyInvitations: true, digestFrequency: 'weekly' };
   if (!supabase) return fallback;
   const { data, error } = await supabase.from('notification_preferences').select('*').eq('user_id', userId).maybeSingle();
   if (error) throw new Error(error.message);
   if (!data) return fallback;
   return {
-    emailEnabled: data.email_enabled, notifyMentions: data.notify_mentions, notifyDecisions: data.notify_decisions,
+    emailEnabled: data.email_enabled, pushEnabled: data.push_enabled, notifyMentions: data.notify_mentions, notifyDecisions: data.notify_decisions,
     notifyActions: data.notify_actions, notifyInvitations: data.notify_invitations, digestFrequency: data.digest_frequency,
   };
 }
@@ -1179,7 +1180,7 @@ export async function getNotificationPreferences(userId: string): Promise<Notifi
 export async function updateNotificationPreferences(userId: string, prefs: NotificationPreferences) {
   if (!supabase) throw new Error('Supabase is not configured.');
   const { error } = await supabase.from('notification_preferences').upsert({
-    user_id: userId, email_enabled: prefs.emailEnabled, notify_mentions: prefs.notifyMentions, notify_decisions: prefs.notifyDecisions,
+    user_id: userId, email_enabled: prefs.emailEnabled, push_enabled: prefs.pushEnabled, notify_mentions: prefs.notifyMentions, notify_decisions: prefs.notifyDecisions,
     notify_actions: prefs.notifyActions, notify_invitations: prefs.notifyInvitations, digest_frequency: prefs.digestFrequency,
     updated_at: new Date().toISOString(),
   });
@@ -1193,12 +1194,25 @@ async function notifyByEmail(userId: string, category: 'mentions' | 'decisions' 
   catch { /* best-effort — a failed notification email should never block the underlying action */ }
 }
 
+/** Fire-and-forget: sends a real browser push notification, respecting the same per-category + push-enabled preferences as email. */
+async function notifyByPush(userId: string, category: 'mentions' | 'decisions' | 'actions' | 'invitations', title: string, body: string) {
+  if (!supabase) return;
+  try { await supabase.functions.invoke('send-push-notification', { body: { userId, category, title, body } }); }
+  catch { /* best-effort — push failures never block the underlying action */ }
+}
+
 export async function notifyActionAssigned(ownerId: string, actionTitle: string, workspaceName: string) {
-  await notifyByEmail(ownerId, 'actions', `New action assigned: ${actionTitle}`, 'You\'ve been assigned an action', `You were assigned "${actionTitle}" in ${workspaceName}.`);
+  await Promise.all([
+    notifyByEmail(ownerId, 'actions', `New action assigned: ${actionTitle}`, 'You\'ve been assigned an action', `You were assigned "${actionTitle}" in ${workspaceName}.`),
+    notifyByPush(ownerId, 'actions', 'New action assigned', `You were assigned "${actionTitle}" in ${workspaceName}.`),
+  ]);
 }
 
 export async function notifyMentioned(mentionedUserId: string, mentionerName: string, context: string) {
-  await notifyByEmail(mentionedUserId, 'mentions', `${mentionerName} mentioned you`, 'You were mentioned', `${mentionerName} mentioned you: "${context}"`);
+  await Promise.all([
+    notifyByEmail(mentionedUserId, 'mentions', `${mentionerName} mentioned you`, 'You were mentioned', `${mentionerName} mentioned you: "${context}"`),
+    notifyByPush(mentionedUserId, 'mentions', `${mentionerName} mentioned you`, context),
+  ]);
 }
 
 // ============================================================================
@@ -1246,4 +1260,132 @@ export async function getWorkspaceUsage(workspaceId: string): Promise<WorkspaceU
     activeMembers: members.count ?? 0, discussionsCreated: discussions.count ?? 0, decisionsMade: decisions.count ?? 0,
     pollsCreated: polls.count ?? 0, aiAnalysesRun: ai.count ?? 0,
   };
+}
+
+// ============================================================================
+// Web Push subscription management (client side)
+// ============================================================================
+
+function base64UrlToUint8Array(base64Url: string): Uint8Array {
+  const padding = '='.repeat((4 - (base64Url.length % 4)) % 4);
+  const base64 = (base64Url + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = atob(base64);
+  return Uint8Array.from([...raw].map((c) => c.charCodeAt(0)));
+}
+
+/** Asks the browser for notification permission and subscribes to push, saving the subscription for this user. */
+export async function subscribeToPush(userId: string): Promise<{ error: string | null }> {
+  if (!supabase) return { error: 'Supabase is not configured.' };
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) return { error: 'Push notifications are not supported in this browser.' };
+  const vapidPublicKey = import.meta.env.VITE_VAPID_PUBLIC_KEY as string | undefined;
+  if (!vapidPublicKey) return { error: 'Push is not configured yet — VITE_VAPID_PUBLIC_KEY is missing.' };
+
+  const permission = await Notification.requestPermission();
+  if (permission !== 'granted') return { error: 'Notification permission was not granted.' };
+
+  const registration = await navigator.serviceWorker.ready;
+  const subscription = await registration.pushManager.subscribe({
+    userVisibleOnly: true,
+    applicationServerKey: base64UrlToUint8Array(vapidPublicKey),
+  });
+  const raw = subscription.toJSON();
+  const { error } = await supabase.from('push_subscriptions').upsert({
+    user_id: userId, endpoint: raw.endpoint!, p256dh: raw.keys!.p256dh, auth: raw.keys!.auth,
+  }, { onConflict: 'endpoint' });
+  if (error) return { error: error.message };
+  return { error: null };
+}
+
+export async function unsubscribeFromPush(): Promise<{ error: string | null }> {
+  if (!supabase) return { error: 'Supabase is not configured.' };
+  if (!('serviceWorker' in navigator)) return { error: null };
+  const registration = await navigator.serviceWorker.ready;
+  const subscription = await registration.pushManager.getSubscription();
+  if (!subscription) return { error: null };
+  const endpoint = subscription.endpoint;
+  await subscription.unsubscribe();
+  const { error } = await supabase.from('push_subscriptions').delete().eq('endpoint', endpoint);
+  if (error) return { error: error.message };
+  return { error: null };
+}
+
+export async function isPushSubscribed(): Promise<boolean> {
+  if (!('serviceWorker' in navigator)) return false;
+  const registration = await navigator.serviceWorker.ready;
+  const subscription = await registration.pushManager.getSubscription();
+  return subscription !== null;
+}
+
+// ============================================================================
+// Admin API keys
+// ============================================================================
+
+async function sha256Hex(input: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(input));
+  return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+export async function listApiKeys(workspaceId: string): Promise<ApiKeySummary[]> {
+  if (!supabase) return [];
+  const { data, error } = await supabase.from('api_keys').select('id,name,key_prefix,revoked,last_used_at,created_at').eq('workspace_id', workspaceId).order('created_at', { ascending: false });
+  if (error) throw new Error(error.message);
+  return (data ?? []).map((row) => ({ id: row.id, name: row.name, keyPrefix: row.key_prefix, revoked: row.revoked, lastUsedAt: row.last_used_at, createdAt: row.created_at }));
+}
+
+/** Creates a new API key and returns the FULL key exactly once — it is never retrievable again after this. */
+export async function createApiKey(workspaceId: string, name: string, createdBy: string): Promise<string> {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const randomBytes = crypto.getRandomValues(new Uint8Array(24));
+  const fullKey = `pulse_sk_${Array.from(randomBytes).map((b) => b.toString(16).padStart(2, '0')).join('')}`;
+  const keyHash = await sha256Hex(fullKey);
+  const { error } = await supabase.from('api_keys').insert({ workspace_id: workspaceId, name, key_prefix: fullKey.slice(0, 16), key_hash: keyHash, created_by: createdBy });
+  if (error) throw new Error(error.message);
+  return fullKey;
+}
+
+export async function revokeApiKey(keyId: string) {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const { error } = await supabase.from('api_keys').update({ revoked: true }).eq('id', keyId);
+  if (error) throw new Error(error.message);
+}
+
+// ============================================================================
+// Incoming webhooks
+// ============================================================================
+
+export async function listIncomingWebhooks(workspaceId: string): Promise<IncomingWebhookSummary[]> {
+  if (!supabase) return [];
+  const { data, error } = await supabase.from('incoming_webhooks').select('id,name,token,last_used_at,created_at').eq('workspace_id', workspaceId).order('created_at', { ascending: false });
+  if (error) throw new Error(error.message);
+  return (data ?? []).map((row) => ({ id: row.id, name: row.name, token: row.token, lastUsedAt: row.last_used_at, createdAt: row.created_at }));
+}
+
+export async function createIncomingWebhook(workspaceId: string, name: string, createdBy: string): Promise<IncomingWebhookSummary> {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const { data, error } = await supabase.from('incoming_webhooks').insert({ workspace_id: workspaceId, name, created_by: createdBy }).select('id,name,token,last_used_at,created_at').single();
+  if (error) throw new Error(error.message);
+  return { id: data.id, name: data.name, token: data.token, lastUsedAt: data.last_used_at, createdAt: data.created_at };
+}
+
+export async function deleteIncomingWebhook(id: string) {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const { error } = await supabase.from('incoming_webhooks').delete().eq('id', id);
+  if (error) throw new Error(error.message);
+}
+
+// ============================================================================
+// Data retention
+// ============================================================================
+
+export async function getDataRetentionDays(workspaceId: string): Promise<number | null> {
+  if (!supabase) return null;
+  const { data, error } = await supabase.from('workspaces').select('discussion_retention_days').eq('id', workspaceId).maybeSingle();
+  if (error) throw new Error(error.message);
+  return data?.discussion_retention_days ?? null;
+}
+
+export async function setDataRetentionDays(workspaceId: string, days: number | null) {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const { error } = await supabase.from('workspaces').update({ discussion_retention_days: days }).eq('id', workspaceId);
+  if (error) throw new Error(error.message);
 }

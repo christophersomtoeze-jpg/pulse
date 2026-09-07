@@ -238,6 +238,7 @@ export interface ProfileDetails {
 
 export interface NotificationPreferences {
   emailEnabled: boolean;
+  pushEnabled: boolean;
   notifyMentions: boolean;
   notifyDecisions: boolean;
   notifyActions: boolean;
@@ -265,4 +266,22 @@ export interface WorkspaceUsage {
   decisionsMade: number;
   pollsCreated: number;
   aiAnalysesRun: number;
+}
+
+// ---- Push, API keys, webhooks, retention ----
+export interface ApiKeySummary {
+  id: string;
+  name: string;
+  keyPrefix: string;
+  revoked: boolean;
+  lastUsedAt: string | null;
+  createdAt: string;
+}
+
+export interface IncomingWebhookSummary {
+  id: string;
+  name: string;
+  token: string;
+  lastUsedAt: string | null;
+  createdAt: string;
 }

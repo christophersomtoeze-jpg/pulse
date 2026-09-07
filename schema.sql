@@ -1003,3 +1003,125 @@ drop policy if exists workspace_delete_owner on public.workspaces;
 create policy workspace_delete_owner on public.workspaces for delete to authenticated using (owner_id = auth.uid());
 
 notify pgrst, 'reload schema';
+
+-- ============================================================================
+-- Web Push notifications — real browser push, no mobile app needed.
+-- ============================================================================
+create table if not exists public.push_subscriptions (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  endpoint text not null unique,
+  p256dh text not null,
+  auth text not null,
+  created_at timestamptz not null default now()
+);
+create index if not exists push_subscriptions_user_idx on public.push_subscriptions(user_id);
+alter table public.push_subscriptions enable row level security;
+drop policy if exists push_subscriptions_select_own on public.push_subscriptions;
+create policy push_subscriptions_select_own on public.push_subscriptions for select to authenticated using (user_id = auth.uid());
+drop policy if exists push_subscriptions_insert_own on public.push_subscriptions;
+create policy push_subscriptions_insert_own on public.push_subscriptions for insert to authenticated with check (user_id = auth.uid());
+drop policy if exists push_subscriptions_delete_own on public.push_subscriptions;
+create policy push_subscriptions_delete_own on public.push_subscriptions for delete to authenticated using (user_id = auth.uid());
+
+alter table public.notification_preferences add column if not exists push_enabled boolean not null default true;
+
+-- Lets the send-push-notification edge function (service role) look up a
+-- user's subscriptions + whether they actually want this category, mirroring
+-- get_notification_target's email logic.
+create or replace function public.get_push_targets(p_user_id uuid, p_category text)
+returns table (endpoint text, p256dh text, auth text) language plpgsql security definer set search_path = public as $$
+declare wants_it boolean;
+begin
+  select
+    case p_category
+      when 'mentions' then coalesce(np.notify_mentions, true)
+      when 'decisions' then coalesce(np.notify_decisions, true)
+      when 'actions' then coalesce(np.notify_actions, true)
+      when 'invitations' then coalesce(np.notify_invitations, true)
+      else true
+    end and coalesce(np.push_enabled, true)
+  into wants_it
+  from public.profiles p left join public.notification_preferences np on np.user_id = p.id
+  where p.id = p_user_id;
+
+  if wants_it is not false then
+    return query select ps.endpoint, ps.p256dh, ps.auth from public.push_subscriptions ps where ps.user_id = p_user_id;
+  end if;
+  return;
+end;
+$$;
+grant execute on function public.get_push_targets(uuid, text) to authenticated, service_role;
+
+-- ============================================================================
+-- Admin API keys — programmatic access for a workspace's own scripts/tools.
+-- Only the SHA-256 hash is ever stored; the real key is shown once at creation.
+-- ============================================================================
+create table if not exists public.api_keys (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references public.workspaces(id) on delete cascade,
+  name text not null,
+  key_prefix text not null,
+  key_hash text not null,
+  created_by uuid references public.profiles(id) on delete set null,
+  last_used_at timestamptz,
+  revoked boolean not null default false,
+  created_at timestamptz not null default now()
+);
+create unique index if not exists api_keys_hash_idx on public.api_keys(key_hash);
+create index if not exists api_keys_workspace_idx on public.api_keys(workspace_id);
+alter table public.api_keys enable row level security;
+drop policy if exists api_keys_select_admin on public.api_keys;
+create policy api_keys_select_admin on public.api_keys for select to authenticated using (public.is_workspace_admin(workspace_id));
+drop policy if exists api_keys_insert_admin on public.api_keys;
+create policy api_keys_insert_admin on public.api_keys for insert to authenticated with check (public.is_workspace_admin(workspace_id) and created_by = auth.uid());
+drop policy if exists api_keys_update_admin on public.api_keys;
+create policy api_keys_update_admin on public.api_keys for update to authenticated using (public.is_workspace_admin(workspace_id)) with check (public.is_workspace_admin(workspace_id));
+
+-- ============================================================================
+-- Incoming webhooks — turns any external tool (Zapier, Make, n8n, a custom
+-- script) into a real PULSE integration without a dedicated OAuth app per
+-- platform. Each webhook has its own unguessable token in the URL itself.
+-- ============================================================================
+create table if not exists public.incoming_webhooks (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references public.workspaces(id) on delete cascade,
+  name text not null,
+  token text not null unique default encode(gen_random_bytes(24), 'hex'),
+  created_by uuid references public.profiles(id) on delete set null,
+  last_used_at timestamptz,
+  created_at timestamptz not null default now()
+);
+alter table public.incoming_webhooks enable row level security;
+drop policy if exists incoming_webhooks_select_admin on public.incoming_webhooks;
+create policy incoming_webhooks_select_admin on public.incoming_webhooks for select to authenticated using (public.is_workspace_admin(workspace_id));
+drop policy if exists incoming_webhooks_insert_admin on public.incoming_webhooks;
+create policy incoming_webhooks_insert_admin on public.incoming_webhooks for insert to authenticated with check (public.is_workspace_admin(workspace_id) and created_by = auth.uid());
+drop policy if exists incoming_webhooks_delete_admin on public.incoming_webhooks;
+create policy incoming_webhooks_delete_admin on public.incoming_webhooks for delete to authenticated using (public.is_workspace_admin(workspace_id));
+
+-- ============================================================================
+-- Configurable data retention — applies only to raw Discussions/Messages.
+-- Decisions are never auto-cleaned: PULSE's whole premise is that decisions
+-- are kept forever, so retention deliberately does not touch them.
+-- ============================================================================
+alter table public.workspaces add column if not exists discussion_retention_days integer;
+
+create or replace function public.run_data_retention_cleanup() returns void language plpgsql security definer set search_path = public as $$
+begin
+  update public.discussions
+  set status = 'archived'
+  from public.workspaces w
+  where discussions.workspace_id = w.id
+    and w.discussion_retention_days is not null
+    and discussions.status <> 'archived'
+    and discussions.updated_at < now() - (w.discussion_retention_days || ' days')::interval;
+end;
+$$;
+grant execute on function public.run_data_retention_cleanup() to service_role;
+
+-- Schedule it daily once pg_cron is enabled (Dashboard > Database >
+-- Extensions), same as the digest emails above:
+-- select cron.schedule('pulse-data-retention', '0 3 * * *', $$ select public.run_data_retention_cleanup(); $$);
+
+notify pgrst, 'reload schema';

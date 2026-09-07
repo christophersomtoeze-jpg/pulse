@@ -110,3 +110,33 @@ This uses Supabase Auth's built-in TOTP support directly — no secrets or setup
 supabase functions deploy delete-account
 ```
 No secrets needed beyond what's already set (it uses your existing service-role key).
+
+## Push notifications (real browser push, no mobile app)
+```bash
+node scripts/generate-vapid-keys.js
+```
+This prints two values, using nothing but Node's built-in crypto — no account, no service, no npm package needed to generate them:
+- `VITE_VAPID_PUBLIC_KEY` → add to Render's environment variables (safe to expose, it's the public half)
+- `VAPID_PRIVATE_KEY` → keep secret, run: `supabase secrets set VAPID_PRIVATE_KEY=<value>`
+
+Then:
+```bash
+supabase secrets set VAPID_SUBJECT=mailto:you@yourcompany.com
+supabase functions deploy send-push-notification
+```
+Users turn it on themselves in Settings > Notifications — that's the browser's own permission prompt, nothing to configure per-user on your end.
+
+## Installable app (PWA)
+No setup needed — `manifest.json`, an icon, and a service worker are already in `public/` and wired into `index.html`/`main.tsx`. Once deployed, browsers will offer "Install PULSE" automatically (Chrome/Edge show an install icon in the address bar; Safari on iOS uses Share > Add to Home Screen).
+
+## Incoming webhooks (Settings > Integrations, works today)
+No setup needed on your end — admins generate a URL per workspace directly in the Integrations page. Anything that can send a webhook (Zapier, Make, n8n, GitHub, Jira Automation, Power Automate, a five-line script) can now post real updates into PULSE without you building a dedicated OAuth integration for it.
+
+## Admin API keys (Settings > Security > API Keys)
+```bash
+supabase functions deploy api --no-verify-jwt
+```
+Admins generate a key in Settings, then call `GET/POST https://<project-ref>.supabase.co/functions/v1/api/decisions` (or `/actions`) with `Authorization: Bearer pulse_sk_...`.
+
+## Configurable data retention
+Works as soon as `schema.sql` is applied (Settings > Data & Privacy). The actual daily cleanup needs one more step, same as the digest emails: enable `pg_cron` in Dashboard > Database > Extensions, then uncomment and run the `cron.schedule('pulse-data-retention', ...)` line at the very end of `schema.sql`. Decisions are never touched by this — only inactive Discussions get archived.
