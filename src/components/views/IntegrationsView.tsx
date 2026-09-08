@@ -1,17 +1,71 @@
-import { useEffect, useState } from 'react';
-import { CheckCircle2, Copy, ExternalLink, Plug, Plus, Trash2, Webhook } from 'lucide-react';
+import { useEffect, useState, type FormEvent } from 'react';
+import { CheckCircle2, Copy, ExternalLink, Plug, Plus, RefreshCw, Trash2, Webhook, X } from 'lucide-react';
 import { useAuth } from '@/auth/AuthProvider';
-import { connectSlack, createIncomingWebhook, deleteIncomingWebhook, disconnectIntegration, listIncomingWebhooks, listWorkspaceIntegrations } from '@/lib/pulseApi';
+import {
+  connectGoogle, connectJira, connectMicrosoft, connectNotion, connectSlack, createIncomingWebhook,
+  deleteIncomingWebhook, disconnectIntegration, listIncomingWebhooks, listWorkspaceIntegrations, syncGoogle, syncMicrosoft,
+} from '@/lib/pulseApi';
 import type { IncomingWebhookSummary, IntegrationProvider, WorkspaceIntegration } from '@/types';
 
 const providerInfo: Record<IntegrationProvider, { name: string; description: string; docsHint: string; wired: boolean }> = {
-  slack: { name: 'Slack', description: 'Turn channel conversations into PULSE discussions.', docsHint: 'Fully wired — needs SLACK_CLIENT_ID/SECRET set (see SUPABASE_SETUP.md).', wired: true },
-  teams: { name: 'Microsoft Teams', description: 'Bring Teams channel activity into PULSE.', docsHint: 'Needs a Teams app registration + Graph API webhook — not yet built. Use an Incoming Webhook below as a workaround via Power Automate.', wired: false },
-  google: { name: 'Google Workspace', description: 'Google Drive documents and Calendar events.', docsHint: 'Needs a Google Cloud OAuth app with Drive/Calendar scopes — not yet built.', wired: false },
-  microsoft365: { name: 'Microsoft 365', description: 'OneDrive documents and Outlook Calendar.', docsHint: 'Needs a Microsoft Entra app registration with Graph scopes — not yet built.', wired: false },
-  jira: { name: 'Jira', description: 'Sync PULSE Actions with Jira issues.', docsHint: 'Needs a Jira OAuth 2.0 (3LO) app — not yet built. Jira Automation can call an Incoming Webhook below in the meantime.', wired: false },
-  notion: { name: 'Notion', description: 'Pull Notion pages in as Resources.', docsHint: 'Needs a Notion internal integration token — not yet built.', wired: false },
+  slack: { name: 'Slack', description: 'Turn channel conversations into PULSE discussions.', docsHint: 'Needs SLACK_CLIENT_ID/SECRET set (see SUPABASE_SETUP.md).', wired: true },
+  google: { name: 'Google Workspace', description: 'Google Drive files as Resources, Calendar deadlines.', docsHint: 'Needs GOOGLE_CLIENT_ID/SECRET set (see SUPABASE_SETUP.md).', wired: true },
+  microsoft365: { name: 'Microsoft 365', description: 'OneDrive files as Resources, Outlook Calendar deadlines.', docsHint: 'Needs MICROSOFT_CLIENT_ID/SECRET set (see SUPABASE_SETUP.md).', wired: true },
+  teams: { name: 'Microsoft Teams', description: 'Bring a Teams channel\'s messages into PULSE.', docsHint: 'Uses the same Microsoft connection above. Syncing a specific channel needs one extra manual step — see SUPABASE_SETUP.md.', wired: true },
+  jira: { name: 'Jira', description: 'Send PULSE Actions to Jira as real issues.', docsHint: 'Needs JIRA_CLIENT_ID/SECRET set (see SUPABASE_SETUP.md).', wired: true },
+  notion: { name: 'Notion', description: 'Connect with an internal integration token — no OAuth needed.', docsHint: 'Paste a token from notion.so/my-integrations (see SUPABASE_SETUP.md).', wired: true },
 };
+
+function NotionConnectForm({ workspaceId, onConnected }: { workspaceId: string; onConnected: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [token, setToken] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!token.trim()) return;
+    setBusy(true); setError('');
+    const result = await connectNotion(workspaceId, token.trim());
+    setBusy(false);
+    if (result.error) { setError(result.error); return; }
+    setToken(''); setOpen(false); onConnected();
+  };
+
+  if (!open) return <button onClick={() => setOpen(true)} className="primary-btn px-3 py-1.5 text-xs">Connect</button>;
+
+  return (
+    <form onSubmit={submit} className="mt-2 flex flex-col gap-2 sm:flex-row">
+      <input type="password" value={token} onChange={(e) => setToken(e.target.value)} placeholder="secret_..." className="field flex-1 text-xs" />
+      <div className="flex gap-2">
+        <button disabled={busy || !token.trim()} className="primary-btn px-3 py-1.5 text-xs disabled:opacity-40">{busy ? 'Checking…' : 'Save'}</button>
+        <button type="button" onClick={() => setOpen(false)} className="icon-btn h-8 w-8"><X className="h-3.5 w-3.5" /></button>
+      </div>
+      {error && <p className="w-full text-xs text-ember-400">{error}</p>}
+    </form>
+  );
+}
+
+function SyncButton({ workspaceId, provider }: { workspaceId: string; provider: 'google' | 'microsoft365' }) {
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState('');
+
+  const run = async () => {
+    setBusy(true); setResult('');
+    const res = provider === 'google' ? await syncGoogle(workspaceId) : await syncMicrosoft(workspaceId);
+    setBusy(false);
+    setResult(res.error ?? `Imported ${res.importedResources} file(s) as Resources. ${res.upcomingEvents.length} upcoming event(s) found.`);
+  };
+
+  return (
+    <div className="mt-2">
+      <button onClick={run} disabled={busy} className="flex items-center gap-1.5 text-xs font-medium text-pulse-300 disabled:opacity-40">
+        <RefreshCw className={`h-3 w-3 ${busy ? 'animate-spin' : ''}`} /> {busy ? 'Syncing…' : 'Sync now'}
+      </button>
+      {result && <p className="mt-1 text-[11px] text-ink-500">{result}</p>}
+    </div>
+  );
+}
 
 function IncomingWebhooksSection({ workspaceId, isAdmin }: { workspaceId: string; isAdmin: boolean }) {
   const { user } = useAuth();
@@ -40,7 +94,7 @@ function IncomingWebhooksSection({ workspaceId, isAdmin }: { workspaceId: string
   return (
     <section className="mt-6">
       <h2 className="flex items-center gap-1.5 text-sm font-semibold"><Webhook className="h-4 w-4 text-pulse-300" /> Incoming webhooks</h2>
-      <p className="mt-1 text-xs text-ink-500">Give Zapier, Make, n8n, Jira Automation, Power Automate — or any script — a URL that posts real updates into PULSE as a discussion. Works today, no OAuth app needed.</p>
+      <p className="mt-1 text-xs text-ink-500">Give Zapier, Make, n8n, Jira Automation, Power Automate — or any script — a URL that posts real updates into PULSE as a discussion.</p>
 
       {isAdmin && (
         <div className="mt-3 flex gap-2">
@@ -77,6 +131,13 @@ export function IntegrationsView({ workspaceId, isAdmin }: { workspaceId: string
   useEffect(() => { load(); }, [workspaceId]);
 
   const disconnect = async (provider: IntegrationProvider) => { await disconnectIntegration(workspaceId, provider); load(); };
+  const connectHandlers: Partial<Record<IntegrationProvider, () => void>> = {
+    slack: () => connectSlack(workspaceId),
+    google: () => connectGoogle(workspaceId),
+    microsoft365: () => connectMicrosoft(workspaceId),
+    teams: () => connectMicrosoft(workspaceId),
+    jira: () => connectJira(workspaceId),
+  };
 
   return (
     <div className="mx-auto max-w-2xl px-4 pb-28 pt-5">
@@ -100,12 +161,16 @@ export function IntegrationsView({ workspaceId, isAdmin }: { workspaceId: string
                 </div>
                 {connected ? (
                   <button disabled={!isAdmin} onClick={() => disconnect(i.provider)} className="rounded-lg border border-ember-500/30 bg-ember-500/10 px-3 py-1.5 text-xs font-medium text-ember-300 disabled:opacity-40">Disconnect</button>
-                ) : i.provider === 'slack' ? (
-                  <button disabled={!isAdmin} onClick={() => connectSlack(workspaceId)} className="primary-btn px-3 py-1.5 text-xs disabled:opacity-40">Connect</button>
+                ) : i.provider === 'notion' ? (
+                  isAdmin ? null : <span className="text-xs text-ink-500">Admin only</span>
+                ) : connectHandlers[i.provider] ? (
+                  <button disabled={!isAdmin} onClick={connectHandlers[i.provider]} className="primary-btn px-3 py-1.5 text-xs disabled:opacity-40">Connect</button>
                 ) : (
                   <span className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-ink-500">Not yet built</span>
                 )}
               </div>
+              {!connected && i.provider === 'notion' && isAdmin && <NotionConnectForm workspaceId={workspaceId} onConnected={load} />}
+              {connected && (i.provider === 'google' || i.provider === 'microsoft365') && <SyncButton workspaceId={workspaceId} provider={i.provider} />}
               {!connected && <p className="mt-2 flex items-center gap-1 text-[11px] text-ink-600"><ExternalLink className="h-3 w-3" /> {info.docsHint}</p>}
             </div>
           );

@@ -137,6 +137,7 @@ export interface WorkspaceAction {
   status: ActionStatus;
   priority: ActionPriority;
   createdAt: string;
+  jiraIssueKey: string | null;
 }
 
 // ---- Global / decision-history search ----
@@ -283,5 +284,12 @@ export interface IncomingWebhookSummary {
   name: string;
   token: string;
   lastUsedAt: string | null;
+  createdAt: string;
+}
+
+export interface SsoDomainSummary {
+  id: string;
+  domain: string;
+  defaultRole: string;
   createdAt: string;
 }

@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { Activity, BrainCircuit, Eye, EyeOff, Lock, Mail, ShieldCheck, Users2 } from 'lucide-react';
 import { useAuth } from '@/auth/AuthProvider';
+import { useTranslation } from '@/lib/i18n/I18nProvider';
 import { GoogleMark, MicrosoftMark, AppleMark } from './BrandMarks';
 
 const features = [
@@ -26,7 +27,8 @@ function PulseWave() {
 }
 
 export function AuthScreen() {
-  const { signIn, signUp, signInWithOAuth, configured } = useAuth();
+  const { signIn, signUp, signInWithOAuth, signInWithSSO, configured } = useAuth();
+  const { t } = useTranslation();
   const [mode, setMode] = useState<'login' | 'signup'>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -95,10 +97,10 @@ export function AuthScreen() {
           </div>
 
           <h1 className="font-display text-3xl font-semibold">
-            {mode === 'login' ? <>Welcome back <span aria-hidden>👋</span></> : 'Create your account'}
+            {mode === 'login' ? <>{t('auth_welcome_back')} <span aria-hidden>👋</span></> : t('auth_create_account')}
           </h1>
           <p className="mt-2 text-sm text-ink-400">
-            {mode === 'login' ? 'Sign in to your PULSE account' : 'Start making better decisions with your team'}
+            {mode === 'login' ? t('auth_signin_subtitle') : 'Start making better decisions with your team'}
           </p>
 
           {!configured && (
@@ -115,7 +117,7 @@ export function AuthScreen() {
               </div>
             )}
             <div>
-              <label className="text-xs font-medium text-ink-400">Email address</label>
+              <label className="text-xs font-medium text-ink-400">{t('auth_email')}</label>
               <div className="relative mt-1.5">
                 <Mail className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-500" />
                 <input required type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@company.com" className="field pl-10" />
@@ -123,7 +125,7 @@ export function AuthScreen() {
             </div>
             <div>
               <div className="flex items-center justify-between">
-                <label className="text-xs font-medium text-ink-400">Password</label>
+                <label className="text-xs font-medium text-ink-400">{t('auth_password')}</label>
                 {mode === 'login' && <button type="button" className="text-xs font-medium text-pulse-300">Forgot password?</button>}
               </div>
               <div className="relative mt-1.5">
@@ -139,7 +141,7 @@ export function AuthScreen() {
             {notice && <p className="text-sm text-flux-400">{notice}</p>}
 
             <button disabled={busy || !configured} className="w-full rounded-xl bg-gradient-to-r from-[#7c3aed] to-[#a855f7] py-3 font-semibold text-white transition-opacity disabled:opacity-40">
-              {busy ? 'Working…' : mode === 'login' ? 'Sign in →' : 'Create account →'}
+              {busy ? 'Working…' : mode === 'login' ? `${t('auth_signin')} →` : `${t('auth_create')} →`}
             </button>
           </form>
 
@@ -159,10 +161,26 @@ export function AuthScreen() {
             </button>
           </div>
 
+          {mode === 'login' && (
+            <button
+              onClick={async () => {
+                const domain = window.prompt('Your company email domain (e.g. yourcompany.com):');
+                if (!domain?.trim()) return;
+                setError('');
+                const result = await signInWithSSO(domain.trim());
+                if (result.error) setError(result.error);
+              }}
+              disabled={!configured}
+              className="mt-2.5 w-full rounded-xl border border-white/10 py-2.5 text-sm font-medium text-ink-300 disabled:opacity-40"
+            >
+              Sign in with SSO
+            </button>
+          )}
+
           <p className="mt-6 text-center text-sm text-ink-500">
-            {mode === 'login' ? "Don't have an account? " : 'Already have an account? '}
+            {mode === 'login' ? t('auth_no_account') + ' ' : t('auth_have_account') + ' '}
             <button onClick={() => { setMode(mode === 'login' ? 'signup' : 'login'); setError(''); setNotice(''); }} className="font-medium text-pulse-300">
-              {mode === 'login' ? 'Create one' : 'Sign in'}
+              {mode === 'login' ? t('auth_create_one') : t('auth_signin_link')}
             </button>
           </p>
           <p className="mt-4 text-center text-xs text-ink-600">

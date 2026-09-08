@@ -1,4 +1,5 @@
 import { motion } from 'framer-motion';
+import { useTranslation } from '@/lib/i18n/I18nProvider';
 import { Activity, ChevronRight, FileText, Folder, Map, Pin } from 'lucide-react';
 import type { ActivePoll, DecisionSummary } from '@/types';
 
@@ -20,6 +21,7 @@ function decisionPill(d: DecisionSummary): { label: string; classes: string } {
 }
 
 export function LivingStateLedger({ decisions, polls, resources, onViewAllDecisions, onVoteNow, onOpenResourceHub }: LivingStateLedgerProps) {
+  const { t } = useTranslation();
   return (
     <motion.div
       initial={{ opacity: 0, y: -16 }}
@@ -30,10 +32,10 @@ export function LivingStateLedger({ decisions, polls, resources, onViewAllDecisi
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Activity className="h-4 w-4 text-pulse-300" strokeWidth={2.5} />
-          <h2 className="font-display text-sm font-bold tracking-wide">LIVING STATE LEDGER</h2>
+          <h2 className="font-display text-sm font-bold tracking-wide">{t('ledger_title').toUpperCase()}</h2>
         </div>
         <span className="flex items-center gap-1 text-[10px] font-semibold text-flux-300">
-          Live <span className="h-1.5 w-1.5 rounded-full bg-flux-400 animate-pulse-ring" />
+          {t('ledger_live')} <span className="h-1.5 w-1.5 rounded-full bg-flux-400 animate-pulse-ring" />
         </span>
       </div>
 
@@ -41,7 +43,7 @@ export function LivingStateLedger({ decisions, polls, resources, onViewAllDecisi
         {/* Pinned decisions */}
         <div className="min-w-0 rounded-2xl border border-white/5 bg-black/20 p-2.5">
           <div className="flex items-center gap-1 text-[9px] font-bold uppercase tracking-wide text-ink-400">
-            <Pin className="h-2.5 w-2.5 shrink-0" /> <span className="truncate">Pinned</span>
+            <Pin className="h-2.5 w-2.5 shrink-0" /> <span className="truncate">{t('ledger_pinned')}</span>
             <span className="ml-auto shrink-0 rounded-full bg-white/5 px-1.5 py-0.5 text-[8px] text-ink-300">+{decisions.length}</span>
           </div>
           <div className="mt-2 space-y-1.5">
@@ -57,14 +59,14 @@ export function LivingStateLedger({ decisions, polls, resources, onViewAllDecisi
             {decisions.length === 0 && <p className="text-[10px] text-ink-500">No decisions yet.</p>}
           </div>
           <button onClick={onViewAllDecisions} className="mt-2 flex items-center gap-0.5 text-[9px] font-semibold text-pulse-300">
-            View all <ChevronRight className="h-2.5 w-2.5" />
+            {t('ledger_view_all')} <ChevronRight className="h-2.5 w-2.5" />
           </button>
         </div>
 
         {/* Active polls */}
         <div className="min-w-0 rounded-2xl border border-white/5 bg-black/20 p-2.5">
           <div className="flex items-center gap-1 text-[9px] font-bold uppercase tracking-wide text-ink-400">
-            <Map className="h-2.5 w-2.5 shrink-0" /> <span className="truncate">Polls</span>
+            <Map className="h-2.5 w-2.5 shrink-0" /> <span className="truncate">{t('ledger_polls')}</span>
             <span className="ml-auto shrink-0 rounded-full bg-white/5 px-1.5 py-0.5 text-[8px] text-ink-300">+{polls.length}</span>
           </div>
           <div className="mt-2 space-y-2">
@@ -86,14 +88,14 @@ export function LivingStateLedger({ decisions, polls, resources, onViewAllDecisi
             {polls.length === 0 && <p className="text-[10px] text-ink-500">No active polls.</p>}
           </div>
           <button onClick={onVoteNow} className="mt-2 flex items-center gap-0.5 text-[9px] font-semibold text-pulse-300">
-            Vote now <ChevronRight className="h-2.5 w-2.5" />
+            {t('ledger_vote_now')} <ChevronRight className="h-2.5 w-2.5" />
           </button>
         </div>
 
         {/* Resources */}
         <div className="min-w-0 rounded-2xl border border-white/5 bg-black/20 p-2.5">
           <div className="flex items-center gap-1 text-[9px] font-bold uppercase tracking-wide text-ink-400">
-            <Folder className="h-2.5 w-2.5 shrink-0" /> <span className="truncate">Resources</span>
+            <Folder className="h-2.5 w-2.5 shrink-0" /> <span className="truncate">{t('ledger_resources')}</span>
           </div>
           <div className="mt-2 space-y-1.5">
             {resources.slice(0, 3).map(({ name, icon: Icon }) => (
@@ -104,7 +106,7 @@ export function LivingStateLedger({ decisions, polls, resources, onViewAllDecisi
             ))}
           </div>
           <button onClick={onOpenResourceHub} className="mt-2 flex items-center gap-0.5 text-[9px] font-semibold text-pulse-300">
-            Open hub <ChevronRight className="h-2.5 w-2.5" />
+            {t('ledger_open_hub')} <ChevronRight className="h-2.5 w-2.5" />
           </button>
         </div>
       </div>

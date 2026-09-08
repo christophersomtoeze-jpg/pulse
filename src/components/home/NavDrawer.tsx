@@ -1,6 +1,7 @@
 import { AnimatePresence, motion } from 'framer-motion';
 import { Activity, LogOut, TrendingUp, X } from 'lucide-react';
 import { useAuth } from '@/auth/AuthProvider';
+import { useTranslation } from '@/lib/i18n/I18nProvider';
 import type { AppView } from '@/lib/viewTypes';
 import { intelligenceItems, teamItems, toolItems, workspaceItems, type NavItem } from '@/components/layout/Sidebar';
 
@@ -23,11 +24,12 @@ function badgeFor(id: AppView, badges: NavDrawerProps['badges']): number {
 }
 
 function Section({ title, items, view, badges, onNavigate }: { title: string; items: NavItem[]; view: AppView; badges: NavDrawerProps['badges']; onNavigate: (v: AppView) => void }) {
+  const { t } = useTranslation();
   return (
     <div className="mt-5 first:mt-0">
       <p className="px-1 text-[10px] font-semibold uppercase tracking-[.2em] text-ink-600">{title}</p>
       <div className="mt-1.5 space-y-0.5">
-        {items.map(({ id, label, icon: Icon }) => {
+        {items.map(({ id, labelKey, icon: Icon }) => {
           const active = view === id;
           const badge = badgeFor(id, badges);
           return (
@@ -38,7 +40,7 @@ function Section({ title, items, view, badges, onNavigate }: { title: string; it
                 active ? 'bg-[#7c3aed]/15 text-pulse-200 border border-[#7c3aed]/30' : 'text-ink-300 hover:bg-white/5'
               }`}
             >
-              <Icon className="h-4 w-4" /> {label}
+              <Icon className="h-4 w-4" /> {t(labelKey)}
               {badge > 0 && <span className="ml-auto grid h-5 min-w-[20px] place-items-center rounded-full bg-[#7c3aed] px-1 text-[10px] font-bold text-white">{badge}</span>}
             </button>
           );
@@ -50,6 +52,7 @@ function Section({ title, items, view, badges, onNavigate }: { title: string; it
 
 export function NavDrawer({ open, view, workspaceName, badges, onClose, onNavigate, isPlatformAdmin }: NavDrawerProps) {
   const { user, signOut } = useAuth();
+  const { t } = useTranslation();
 
   return (
     <AnimatePresence>
@@ -87,7 +90,7 @@ export function NavDrawer({ open, view, workspaceName, badges, onClose, onNaviga
                   onClick={() => { onNavigate('platform-metrics'); onClose(); }}
                   className={`mt-1 flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium ${view === 'platform-metrics' ? 'bg-[#7c3aed]/15 text-pulse-200 border border-[#7c3aed]/30' : 'text-ink-300 hover:bg-white/5'}`}
                 >
-                  <TrendingUp className="h-4 w-4" /> Platform Metrics
+                  <TrendingUp className="h-4 w-4" /> {t('nav_platform_metrics')}
                 </button>
               )}
             </nav>

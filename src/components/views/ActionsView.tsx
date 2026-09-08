@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
-import { Calendar, CheckSquare, Plus, User, X } from 'lucide-react';
+import { Calendar, CheckSquare, ExternalLink, Plus, User, X } from 'lucide-react';
 import { useAuth } from '@/auth/AuthProvider';
-import { createAction, listActions, updateActionStatus, type WorkspaceMember } from '@/lib/pulseApi';
+import { createAction, listActions, sendActionToJira, updateActionStatus, type WorkspaceMember } from '@/lib/pulseApi';
 import type { ActionPriority, ActionStatus, WorkspaceAction } from '@/types';
 
 const statusLabel: Record<ActionStatus, string> = { todo: 'To do', 'in-progress': 'In progress', done: 'Done' };
@@ -52,6 +52,31 @@ function NewActionForm({ workspaceId, members, onCreated }: { workspaceId: strin
   );
 }
 
+function JiraButton({ action, onSent }: { action: WorkspaceAction; onSent: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  const send = async () => {
+    const projectKey = window.prompt('Jira project key (e.g. ENG):');
+    if (!projectKey?.trim()) return;
+    setBusy(true); setError('');
+    const result = await sendActionToJira(action.id, projectKey.trim());
+    setBusy(false);
+    if (result.error) { setError(result.error); return; }
+    onSent();
+  };
+
+  if (action.jiraIssueKey) return <span className="text-[10px] text-flux-300">Jira: {action.jiraIssueKey}</span>;
+  return (
+    <>
+      <button onClick={send} disabled={busy} className="flex items-center gap-1 text-[10px] font-medium text-pulse-300 disabled:opacity-40">
+        <ExternalLink className="h-2.5 w-2.5" /> {busy ? 'Sending…' : 'Send to Jira'}
+      </button>
+      {error && <span className="text-[10px] text-ember-400">{error}</span>}
+    </>
+  );
+}
+
 export function ActionsView({ workspaceId, members }: { workspaceId: string; members: WorkspaceMember[] }) {
   const { user } = useAuth();
   const [actions, setActions] = useState<WorkspaceAction[]>([]);
@@ -96,6 +121,7 @@ export function ActionsView({ workspaceId, members }: { workspaceId: string; mem
                 {a.ownerName && <span className="flex items-center gap-1"><User className="h-3 w-3" /> {a.ownerName}</span>}
                 {a.deadline && <span className="flex items-center gap-1"><Calendar className="h-3 w-3" /> {new Date(a.deadline).toLocaleDateString()}</span>}
                 {a.decisionTitle && <span>From: {a.decisionTitle}</span>}
+                <JiraButton action={a} onSent={load} />
               </div>
             </div>
           </div>

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import {
   BarChart3, Bell, Building2, ChevronLeft, ChevronRight, CreditCard, HelpCircle,
-  History, KeyRound, Lock, Plug, Sparkles, Terminal, User, Users,
+  History, KeyRound, Lock, Plug, ShieldCheck, Sparkles, Terminal, User, Users,
 } from 'lucide-react';
 import type { AppView } from '@/lib/viewTypes';
 import { ProfilePanel } from './ProfilePanel';
@@ -14,12 +14,13 @@ import { UsagePanel } from './UsagePanel';
 import { DataPrivacyPanel } from './DataPrivacyPanel';
 import { BillingPanel } from './BillingPanel';
 import { ApiKeysPanel } from './ApiKeysPanel';
+import { SsoPanel } from './SsoPanel';
 
 type ItemId =
   | 'profile' | 'security' | 'appearance'
   | 'workspace-general' | 'workspace-members' | 'workspace-notifications' | 'workspace-integrations'
   | 'ai-settings' | 'usage'
-  | 'audit-log' | 'data-privacy' | 'api-keys'
+  | 'audit-log' | 'data-privacy' | 'api-keys' | 'sso'
   | 'billing'
   | 'help';
 
@@ -45,6 +46,7 @@ const categories: Category[] = [
   { title: 'Security', items: [
     { id: 'audit-log', label: 'Audit Log', icon: History, external: 'audit-log' },
     { id: 'api-keys', label: 'API Keys', icon: Terminal },
+    { id: 'sso', label: 'Single Sign-On', icon: ShieldCheck },
     { id: 'data-privacy', label: 'Data & Privacy', icon: Lock },
   ] },
   { title: 'Billing', items: [{ id: 'billing', label: 'Plan & Billing', icon: CreditCard }] },
@@ -58,7 +60,7 @@ interface SettingsHubProps {
   isAdmin: boolean;
   isOwner: boolean;
   onNavigateApp: (view: AppView) => void;
-  onWorkspaceRenamed: (name: string) => void;
+  onWorkspaceRenamed: (name: string, defaultLanguage: string) => void;
 }
 
 export function SettingsHub({ workspaceId, workspaceName, workspaceRole, isAdmin, isOwner, onNavigateApp, onWorkspaceRenamed }: SettingsHubProps) {
@@ -82,6 +84,7 @@ export function SettingsHub({ workspaceId, workspaceName, workspaceRole, isAdmin
       case 'usage': return <UsagePanel workspaceId={workspaceId} />;
       case 'data-privacy': return <DataPrivacyPanel workspaceId={workspaceId} workspaceName={workspaceName} isOwner={isOwner} />;
       case 'api-keys': return <ApiKeysPanel workspaceId={workspaceId} isAdmin={isAdmin} />;
+      case 'sso': return <SsoPanel workspaceId={workspaceId} isOwner={isOwner} />;
       case 'billing': return <BillingPanel workspaceId={workspaceId} isAdmin={isAdmin} />;
       default: return null;
     }

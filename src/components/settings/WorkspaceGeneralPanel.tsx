@@ -3,7 +3,7 @@ import { Building2 } from 'lucide-react';
 import { getWorkspaceGeneral, updateWorkspaceGeneral } from '@/lib/pulseApi';
 import type { WorkspaceGeneralSettings } from '@/types';
 
-export function WorkspaceGeneralPanel({ workspaceId, isAdmin, onSaved }: { workspaceId: string; isAdmin: boolean; onSaved?: (name: string) => void }) {
+export function WorkspaceGeneralPanel({ workspaceId, isAdmin, onSaved }: { workspaceId: string; isAdmin: boolean; onSaved?: (name: string, defaultLanguage: string) => void }) {
   const [settings, setSettings] = useState<WorkspaceGeneralSettings | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState('');
@@ -17,7 +17,7 @@ export function WorkspaceGeneralPanel({ workspaceId, isAdmin, onSaved }: { works
     try {
       await updateWorkspaceGeneral(workspaceId, settings);
       setNotice('Workspace settings saved.');
-      onSaved?.(settings.name);
+      onSaved?.(settings.name, settings.defaultLanguage);
     } catch (e) { setError(e instanceof Error ? e.message : 'Could not save'); }
     finally { setBusy(false); }
   };
@@ -33,8 +33,9 @@ export function WorkspaceGeneralPanel({ workspaceId, isAdmin, onSaved }: { works
         <div className="grid grid-cols-2 gap-3">
           <div><label className="text-xs font-medium text-ink-400">Default language</label>
             <select value={settings.defaultLanguage} disabled={!isAdmin} onChange={(e) => setSettings({ ...settings, defaultLanguage: e.target.value })} className="field mt-1.5 disabled:opacity-60">
-              <option value="en">English</option><option value="es">Español</option><option value="fr">Français</option><option value="de">Deutsch</option><option value="pt">Português</option>
+              <option value="en">English</option><option value="es">Español</option><option value="fr">Français</option><option value="pt">Português</option>
             </select>
+            <p className="mt-1 text-[10px] text-ink-600">Translates the main navigation, header, and login screen for now — deeper screens are still English-only.</p>
           </div>
           <div><label className="text-xs font-medium text-ink-400">Time zone</label>
             <select value={settings.timezone} disabled={!isAdmin} onChange={(e) => setSettings({ ...settings, timezone: e.target.value })} className="field mt-1.5 disabled:opacity-60">

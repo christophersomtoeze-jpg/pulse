@@ -28,6 +28,7 @@ import { DecisionsListView } from '@/components/decisions/DecisionsListView';
 import { NewDecisionModal } from '@/components/decisions/NewDecisionModal';
 import { DecisionRoom } from '@/components/decisions/DecisionRoom';
 import { KeyboardShortcutsModal } from '@/components/KeyboardShortcutsModal';
+import { I18nProvider } from '@/lib/i18n/I18nProvider';
 import { OnboardingChecklist } from '@/components/home/OnboardingChecklist';
 import { PlatformMetricsView } from '@/components/views/PlatformMetricsView';
 import { TermsPage } from '@/components/legal/TermsPage';
@@ -137,6 +138,7 @@ function AppShell() {
   const [myOpenActionCount, setMyOpenActionCount] = useState(0);
   const [riskCount, setRiskCount] = useState(0);
   const [aiEnabled, setAiEnabled] = useState(true);
+  const [language, setLanguage] = useState('en');
   const [dashboard, setDashboard] = useState<DashboardData>({ waitingForYou: [], decidedByYou: [], upcomingDeadlines: [], teamActivity: [] });
 
   const [view, setView] = useState<AppView>('dashboard');
@@ -176,6 +178,7 @@ function AppShell() {
     const [m, general] = await Promise.all([listWorkspaceMembers(ws.id), getWorkspaceGeneral(ws.id)]);
     setMembers(m);
     setAiEnabled(general?.aiEnabled ?? true);
+    setLanguage(general?.defaultLanguage ?? 'en');
     await refreshWorkspaceData(ws.id);
   }, [refreshWorkspaceData]);
 
@@ -266,6 +269,7 @@ function AppShell() {
   const workspaceRole = members.find((m) => m.userId === user?.id)?.role ?? 'member';
 
   return (
+    <I18nProvider language={language}>
     <div className="flex min-h-screen text-ink-50">
       <Sidebar
         view={view}
@@ -359,7 +363,7 @@ function AppShell() {
             isAdmin={isAdmin}
             isOwner={workspaceRole === 'owner'}
             onNavigateApp={setView}
-            onWorkspaceRenamed={(name) => setWorkspace((w) => (w ? { ...w, name } : w))}
+            onWorkspaceRenamed={(name, defaultLanguage) => { setWorkspace((w) => (w ? { ...w, name } : w)); setLanguage(defaultLanguage); }}
           />
         )}
         {view === 'integrations' && workspace && <IntegrationsView workspaceId={workspace.id} isAdmin={isAdmin} />}
@@ -423,6 +427,7 @@ function AppShell() {
 
       <KeyboardShortcutsModal open={showShortcuts} onClose={() => setShowShortcuts(false)} />
     </div>
+    </I18nProvider>
   );
 }
 
@@ -437,8 +442,8 @@ function AppInner() {
     return () => { active = false; };
   }, [user]);
   if (loading || (user && isSupabaseConfigured && checkingWorkspace)) return <div className="min-h-screen grid place-items-center text-ink-400">Loading PULSE…</div>;
-  if (!user) return <AuthScreen />;
-  if (setup) return <WorkspaceSetup onCreated={() => setSetup(false)} />;
+  if (!user) return <I18nProvider language={navigator.language?.slice(0, 2)}><AuthScreen /></I18nProvider>;
+  if (setup) return <I18nProvider language={navigator.language?.slice(0, 2)}><WorkspaceSetup onCreated={() => setSetup(false)} /></I18nProvider>;
   return <AppShell />;
 }
 

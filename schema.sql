@@ -2,30 +2,11 @@
 -- Run this once in Supabase SQL Editor.
 create extension if not exists pgcrypto;
 
-do $$ begin
-  create type public.workspace_role as enum ('owner', 'admin', 'member', 'guest');
-exception when duplicate_object then null;
-end $$;
-
-do $$ begin
-  create type public.discussion_status as enum ('active', 'heating', 'settling', 'archived');
-exception when duplicate_object then null;
-end $$;
-
-do $$ begin
-  create type public.decision_status as enum ('decided', 'in-review', 'revisiting');
-exception when duplicate_object then null;
-end $$;
-
-do $$ begin
-  create type public.poll_status as enum ('draft', 'open', 'closed');
-exception when duplicate_object then null;
-end $$;
-
-do $$ begin
-  create type public.intent_wave as enum ('whisper', 'standard', 'pulse');
-exception when duplicate_object then null;
-end $$;
+create type public.workspace_role as enum ('owner', 'admin', 'member', 'guest');
+create type public.discussion_status as enum ('active', 'heating', 'settling', 'archived');
+create type public.decision_status as enum ('decided', 'in-review', 'revisiting');
+create type public.poll_status as enum ('draft', 'open', 'closed');
+create type public.intent_wave as enum ('whisper', 'standard', 'pulse');
 
 create table if not exists public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
@@ -1123,5 +1104,60 @@ grant execute on function public.run_data_retention_cleanup() to service_role;
 -- Schedule it daily once pg_cron is enabled (Dashboard > Database >
 -- Extensions), same as the digest emails above:
 -- select cron.schedule('pulse-data-retention', '0 3 * * *', $$ select public.run_data_retention_cleanup(); $$);
+
+notify pgrst, 'reload schema';
+
+-- ============================================================================
+-- Integrations upgrade — OAuth token refresh support (Google/Microsoft need
+-- refresh tokens since their access tokens expire in ~1 hour) + Notion's
+-- simpler token-paste flow reuses the same table via metadata.
+-- ============================================================================
+alter table public.workspace_integrations add column if not exists refresh_token text;
+alter table public.workspace_integrations add column if not exists expires_at timestamptz;
+
+-- Jira sync: lets an Action carry a linked Jira issue key once synced.
+alter table public.actions add column if not exists jira_issue_key text;
+
+notify pgrst, 'reload schema';
+
+-- ============================================================================
+-- SSO — real code against Supabase Auth's actual public SSO API
+-- (supabase.auth.signInWithSSO). The SAML identity-provider handshake itself
+-- is Supabase's own gated feature (Team/Enterprise add-on + `supabase sso
+-- add` via their CLI) — this table's job is just mapping a verified email
+-- domain to the right PULSE workspace once someone signs in that way.
+-- ============================================================================
+create table if not exists public.workspace_sso_domains (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references public.workspaces(id) on delete cascade,
+  domain text not null unique,
+  default_role public.workspace_role not null default 'member',
+  created_by uuid references public.profiles(id) on delete set null,
+  created_at timestamptz not null default now()
+);
+alter table public.workspace_sso_domains enable row level security;
+drop policy if exists workspace_sso_domains_select_member on public.workspace_sso_domains;
+create policy workspace_sso_domains_select_member on public.workspace_sso_domains for select to authenticated using (public.is_workspace_member(workspace_id));
+drop policy if exists workspace_sso_domains_admin_all on public.workspace_sso_domains;
+create policy workspace_sso_domains_admin_all on public.workspace_sso_domains for all to authenticated using (public.is_workspace_admin(workspace_id)) with check (public.is_workspace_admin(workspace_id));
+
+-- Runs right after a real SSO sign-in completes: if the user's email domain
+-- matches a registered workspace, add them to it automatically instead of
+-- leaving them stranded with no workspace.
+create or replace function public.handle_sso_login() returns trigger language plpgsql security definer set search_path = public as $$
+declare matched_domain public.workspace_sso_domains;
+begin
+  if new.email is null then return new; end if;
+  select * into matched_domain from public.workspace_sso_domains where new.email ilike '%@' || domain limit 1;
+  if matched_domain.id is not null then
+    insert into public.workspace_members (workspace_id, user_id, role)
+    values (matched_domain.workspace_id, new.id, matched_domain.default_role)
+    on conflict (workspace_id, user_id) do nothing;
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists on_sso_user_created on auth.users;
+create trigger on_sso_user_created after insert on auth.users for each row execute procedure public.handle_sso_login();
 
 notify pgrst, 'reload schema';

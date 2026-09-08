@@ -13,6 +13,7 @@ interface AuthContextValue {
   signIn: (email: string, password: string) => Promise<{ error: string | null; needsConfirmation?: boolean }>;
   signUp: (email: string, password: string, name: string) => Promise<{ error: string | null; needsConfirmation?: boolean }>;
   signInWithOAuth: (provider: OAuthProvider) => Promise<{ error: string | null }>;
+  signInWithSSO: (domain: string) => Promise<{ error: string | null }>;
   signOut: () => Promise<void>;
 }
 
@@ -68,6 +69,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         options: { redirectTo: window.location.origin },
       });
       return { error: error?.message ?? null };
+    },
+    signInWithSSO: async (domain) => {
+      if (!supabase) return { error: 'Supabase is not configured yet.' };
+      // Real call to Supabase Auth's own public SSO API. Works once your
+      // Supabase project has the SAML SSO add-on enabled and a provider
+      // registered for this domain via `supabase sso add` — see
+      // SUPABASE_SETUP.md for the exact steps.
+      const { data, error } = await supabase.auth.signInWithSSO({ domain });
+      if (error) return { error: error.message };
+      if (data?.url) window.location.assign(data.url);
+      return { error: null };
     },
     signOut: async () => {
       if (supabase) await supabase.auth.signOut();

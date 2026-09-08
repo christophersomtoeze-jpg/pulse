@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Activity, Bell, Menu, Search, Users2 } from 'lucide-react';
 import { useAuth } from '@/auth/AuthProvider';
+import { useTranslation } from '@/lib/i18n/I18nProvider';
 import { NotificationsPopover } from './NotificationsPopover';
 import type { DecisionHistoryEntry } from '@/types';
 
@@ -15,6 +16,7 @@ interface HomeHeaderProps {
 
 export function HomeHeader({ memberCount, isLive, activity, searchOpen, onToggleSearch, onOpenNav }: HomeHeaderProps) {
   const { user } = useAuth();
+  const { t } = useTranslation();
   const [notifOpen, setNotifOpen] = useState(false);
   const unread = activity.length;
 
@@ -56,10 +58,10 @@ export function HomeHeader({ memberCount, isLive, activity, searchOpen, onToggle
             {isLive && <span className="absolute inline-flex h-full w-full animate-pulse-ring rounded-full bg-flux-400" />}
             <span className={`relative inline-flex h-2 w-2 rounded-full ${isLive ? 'bg-flux-400' : 'bg-ink-500'}`} />
           </span>
-          {isLive ? 'Online' : 'Offline'}
+          {isLive ? t('status_online') : t('status_offline')}
         </span>
         <span className="flex items-center gap-1.5 text-ink-400">
-          Members: {memberCount} <Users2 className="h-3.5 w-3.5" />
+          {t('label_members')}: {memberCount} <Users2 className="h-3.5 w-3.5" />
         </span>
       </div>
 

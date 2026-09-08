@@ -140,3 +140,81 @@ Admins generate a key in Settings, then call `GET/POST https://<project-ref>.sup
 
 ## Configurable data retention
 Works as soon as `schema.sql` is applied (Settings > Data & Privacy). The actual daily cleanup needs one more step, same as the digest emails: enable `pg_cron` in Dashboard > Database > Extensions, then uncomment and run the `cron.schedule('pulse-data-retention', ...)` line at the very end of `schema.sql`. Decisions are never touched by this — only inactive Discussions get archived.
+
+# Everything from the "build all of it" round
+
+## Google Workspace (Drive + Calendar)
+1. https://console.cloud.google.com → create a project (or reuse one)
+2. APIs & Services → Library → enable **Google Drive API** and **Google Calendar API**
+3. APIs & Services → Credentials → Create Credentials → OAuth client ID → Web application
+4. Add this Authorized redirect URI: `https://<project-ref>.supabase.co/functions/v1/google-oauth-callback`
+5. Copy the Client ID and secret:
+```bash
+supabase secrets set GOOGLE_CLIENT_ID=...
+supabase secrets set GOOGLE_CLIENT_SECRET=...
+supabase functions deploy google-oauth-callback --no-verify-jwt
+supabase functions deploy google-sync
+```
+6. Add `VITE_GOOGLE_CLIENT_ID` (same value) to Render's environment variables.
+
+## Microsoft 365 + Teams (one connection powers both)
+1. https://portal.azure.com → Microsoft Entra ID → App registrations → New registration
+2. Redirect URI (Web): `https://<project-ref>.supabase.co/functions/v1/microsoft-oauth-callback`
+3. API permissions (Delegated) → add: `Files.Read`, `Calendars.Read`, `ChannelMessage.Read.All`, `offline_access`, `User.Read` → **Grant admin consent**
+4. Certificates & secrets → New client secret → copy the value immediately (hidden after you leave the page)
+```bash
+supabase secrets set MICROSOFT_CLIENT_ID=...
+supabase secrets set MICROSOFT_CLIENT_SECRET=...
+supabase functions deploy microsoft-oauth-callback --no-verify-jwt
+supabase functions deploy microsoft-sync
+supabase functions deploy microsoft-events --no-verify-jwt
+```
+5. Add `VITE_MICROSOFT_CLIENT_ID` to Render.
+
+**Teams channel sync needs one extra manual step** (Graph doesn't have a dashboard toggle like Slack does): after deploying `microsoft-events`, create a subscription for the specific channel you want synced via Graph Explorer (https://developer.microsoft.com/graph/graph-explorer) — the exact request is documented in the comment at the top of `supabase/functions/microsoft-events/index.ts`. Subscriptions expire hourly and need renewing; a future pass can automate that via pg_cron the same way digest emails are scheduled.
+
+## Jira
+1. https://developer.atlassian.com/console/myapps/ → Create → OAuth 2.0 integration
+2. Permissions → add Jira API scopes: `read:jira-work`, `write:jira-work`, `offline_access`
+3. Authorization → callback URL: `https://<project-ref>.supabase.co/functions/v1/jira-oauth-callback`
+```bash
+supabase secrets set JIRA_CLIENT_ID=...
+supabase secrets set JIRA_CLIENT_SECRET=...
+supabase functions deploy jira-oauth-callback --no-verify-jwt
+supabase functions deploy jira-create-issue
+```
+4. Add `VITE_JIRA_CLIENT_ID` to Render. Once connected, each Action gets a "Send to Jira" button (asks for the project key, e.g. `ENG`).
+
+## Notion (no OAuth needed — simplest of the five)
+1. https://www.notion.so/my-integrations → New integration → copy the **Internal Integration Secret**
+2. In Notion itself, open each page/database you want PULSE to read and click **Share** → invite your integration by name (Notion requires this per-page — it's how Notion's permission model works, not something to skip)
+```bash
+supabase functions deploy notion-connect
+```
+3. In PULSE, Settings → Integrations → Notion → paste the secret. No frontend env var needed.
+
+## Multi-language UI
+Works immediately — no setup. Settings → Workspace → General → Default language now actually translates the sidebar, header, "Living State Ledger," and login screen into Spanish, French, or Portuguese in real time. **Honest scope**: this covers the navigation shell and entry screens — the ones every user sees every session. Deeper screens (Decision Room internals, Settings sub-panels, Analytics, etc.) are still English-only; extending coverage there is straightforward but mechanical work, screen by screen, whenever you want it continued.
+
+## SSO
+Real code against Supabase Auth's own public `signInWithSSO()` API — this isn't a placeholder. What it needs from you:
+1. Your Supabase project must be on a plan with the **SAML 2.0 SSO add-on** (a Supabase billing decision — check your project's billing page or talk to Supabase sales; this is their gate, not something in this code)
+2. Once enabled, register your identity provider via their CLI: `supabase sso add --type saml --metadata-url <your IdP's metadata URL>` (Okta, Azure AD, Google Workspace, and most enterprise IdPs all publish one)
+3. In PULSE: Settings → Security → Single Sign-On → register your company's email domain (e.g. `yourcompany.com`) — this is what makes someone who signs in via SSO land in the right workspace automatically, with the role you choose
+4. On the login screen, "Sign in with SSO" asks for that same domain and hands off to Supabase's real SSO flow
+
+## Native mobile apps (Capacitor)
+This wraps the same PWA you already have into real, installable iOS/Android apps — you don't rewrite anything.
+```bash
+npm install
+npx cap add ios       # needs a Mac with Xcode installed
+npx cap add android    # needs Android Studio installed
+npm run cap:ios        # builds + opens Xcode
+npm run cap:android    # builds + opens Android Studio
+```
+Before either: open `capacitor.config.ts` and change the `server.url` to your real production URL (it currently points at a placeholder). From Xcode/Android Studio you build, sign, and submit exactly like any native app — that part genuinely needs:
+- An Apple Developer account ($99/year) to submit to the App Store
+- A Google Play Console account ($25 one-time) to submit to Google Play
+- A Mac for the iOS build specifically (Apple requires this — no way around it)
+
+I can't run Xcode or Android Studio from here to test a build myself — this is real, correct Capacitor configuration, but treat the first build on your machine as the actual verification step, the same way `npm run build` has been your safety net every round.

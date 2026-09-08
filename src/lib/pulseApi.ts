@@ -6,7 +6,7 @@ import type {
   AssistantMessage, MeetingSummary, RiskItem, WorkspaceListItem, AuditLogEntry,
   AnalyticsSnapshot, WorkspaceSubscription, WorkspaceIntegration, IntegrationProvider, PlatformMetrics,
   ProfileDetails, NotificationPreferences, LoginHistoryEntry, WorkspaceGeneralSettings, WorkspaceUsage,
-  ApiKeySummary, IncomingWebhookSummary,
+  ApiKeySummary, IncomingWebhookSummary, SsoDomainSummary,
 } from '@/types';
 import { supabase } from '@/lib/supabase';
 
@@ -640,6 +640,7 @@ export async function listMyWorkspaces(userId: string): Promise<WorkspaceListIte
 type ActionRow = {
   id: string; workspace_id: string; decision_id: string | null; title: string; description: string | null;
   owner_id: string | null; deadline: string | null; status: ActionStatus; priority: ActionPriority; created_at: string;
+  jira_issue_key: string | null;
   owner: { full_name: string } | { full_name: string }[] | null;
   decision: { title: string } | { title: string }[] | null;
 };
@@ -660,10 +661,11 @@ function mapActionRow(row: ActionRow): WorkspaceAction {
     status: row.status,
     priority: row.priority,
     createdAt: row.created_at,
+    jiraIssueKey: row.jira_issue_key,
   };
 }
 
-const ACTION_SELECT = 'id,workspace_id,decision_id,title,description,owner_id,deadline,status,priority,created_at,owner:owner_id(full_name),decision:decision_id(title)';
+const ACTION_SELECT = 'id,workspace_id,decision_id,title,description,owner_id,deadline,status,priority,created_at,jira_issue_key,owner:owner_id(full_name),decision:decision_id(title)';
 
 export async function listActions(workspaceId: string): Promise<WorkspaceAction[]> {
   if (!supabase) return [];
@@ -1387,5 +1389,92 @@ export async function getDataRetentionDays(workspaceId: string): Promise<number 
 export async function setDataRetentionDays(workspaceId: string, days: number | null) {
   if (!supabase) throw new Error('Supabase is not configured.');
   const { error } = await supabase.from('workspaces').update({ discussion_retention_days: days }).eq('id', workspaceId);
+  if (error) throw new Error(error.message);
+}
+
+// ============================================================================
+// Google / Microsoft / Jira / Notion integrations
+// ============================================================================
+
+export function connectGoogle(workspaceId: string) {
+  const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined;
+  if (!clientId) throw new Error('Google is not configured yet — VITE_GOOGLE_CLIENT_ID is missing.');
+  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string;
+  const redirectUri = `${supabaseUrl}/functions/v1/google-oauth-callback`;
+  const scopes = ['https://www.googleapis.com/auth/drive.readonly', 'https://www.googleapis.com/auth/calendar.readonly'].join(' ');
+  const url = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&access_type=offline&prompt=consent&scope=${encodeURIComponent(scopes)}&state=${encodeURIComponent(workspaceId)}`;
+  window.location.assign(url);
+}
+
+export function connectMicrosoft(workspaceId: string) {
+  const clientId = import.meta.env.VITE_MICROSOFT_CLIENT_ID as string | undefined;
+  if (!clientId) throw new Error('Microsoft is not configured yet — VITE_MICROSOFT_CLIENT_ID is missing.');
+  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string;
+  const redirectUri = `${supabaseUrl}/functions/v1/microsoft-oauth-callback`;
+  const scopes = 'offline_access User.Read Files.Read Calendars.Read ChannelMessage.Read.All';
+  const url = `https://login.microsoftonline.com/common/oauth2/v2.0/authorize?client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent(scopes)}&state=${encodeURIComponent(workspaceId)}`;
+  window.location.assign(url);
+}
+
+export function connectJira(workspaceId: string) {
+  const clientId = import.meta.env.VITE_JIRA_CLIENT_ID as string | undefined;
+  if (!clientId) throw new Error('Jira is not configured yet — VITE_JIRA_CLIENT_ID is missing.');
+  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string;
+  const redirectUri = `${supabaseUrl}/functions/v1/jira-oauth-callback`;
+  const scopes = 'read:jira-work write:jira-work offline_access';
+  const url = `https://auth.atlassian.com/authorize?audience=api.atlassian.com&client_id=${encodeURIComponent(clientId)}&scope=${encodeURIComponent(scopes)}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${encodeURIComponent(workspaceId)}&response_type=code&prompt=consent`;
+  window.location.assign(url);
+}
+
+export async function connectNotion(workspaceId: string, token: string): Promise<{ error: string | null }> {
+  if (!supabase) return { error: 'Supabase is not configured.' };
+  const { data, error } = await supabase.functions.invoke('notion-connect', { body: { workspaceId, token } });
+  if (error) return { error: error.message };
+  if (data?.error) return { error: data.error };
+  return { error: null };
+}
+
+export async function syncGoogle(workspaceId: string): Promise<{ importedResources: number; upcomingEvents: { title: string; start: string | null }[]; error?: string }> {
+  if (!supabase) return { importedResources: 0, upcomingEvents: [], error: 'Supabase is not configured.' };
+  const { data, error } = await supabase.functions.invoke('google-sync', { body: { workspaceId } });
+  if (error) return { importedResources: 0, upcomingEvents: [], error: error.message };
+  return data;
+}
+
+export async function syncMicrosoft(workspaceId: string): Promise<{ importedResources: number; upcomingEvents: { title: string; start: string | null }[]; error?: string }> {
+  if (!supabase) return { importedResources: 0, upcomingEvents: [], error: 'Supabase is not configured.' };
+  const { data, error } = await supabase.functions.invoke('microsoft-sync', { body: { workspaceId } });
+  if (error) return { importedResources: 0, upcomingEvents: [], error: error.message };
+  return data;
+}
+
+export async function sendActionToJira(actionId: string, projectKey: string): Promise<{ issueKey?: string; url?: string | null; error?: string }> {
+  if (!supabase) return { error: 'Supabase is not configured.' };
+  const { data, error } = await supabase.functions.invoke('jira-create-issue', { body: { actionId, projectKey } });
+  if (error) return { error: error.message };
+  if (data?.error) return { error: data.error };
+  return data;
+}
+
+// ============================================================================
+// SSO domain mapping
+// ============================================================================
+
+export async function listSsoDomains(workspaceId: string): Promise<SsoDomainSummary[]> {
+  if (!supabase) return [];
+  const { data, error } = await supabase.from('workspace_sso_domains').select('id,domain,default_role,created_at').eq('workspace_id', workspaceId);
+  if (error) throw new Error(error.message);
+  return (data ?? []).map((row) => ({ id: row.id, domain: row.domain, defaultRole: row.default_role, createdAt: row.created_at }));
+}
+
+export async function addSsoDomain(workspaceId: string, domain: string, createdBy: string) {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const { error } = await supabase.from('workspace_sso_domains').insert({ workspace_id: workspaceId, domain: domain.toLowerCase().trim(), created_by: createdBy });
+  if (error) throw new Error(error.message);
+}
+
+export async function removeSsoDomain(id: string) {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const { error } = await supabase.from('workspace_sso_domains').delete().eq('id', id);
   if (error) throw new Error(error.message);
 }

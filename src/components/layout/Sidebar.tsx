@@ -5,42 +5,44 @@ import {
   PanelLeftOpen, PieChart, Settings, ShieldAlert, Sparkles, TrendingUp, UserPlus, Users,
 } from 'lucide-react';
 import { useAuth } from '@/auth/AuthProvider';
+import { useTranslation } from '@/lib/i18n/I18nProvider';
+import type { TranslationKey } from '@/lib/i18n/translations';
 import type { AppView } from '@/lib/viewTypes';
 
 export interface NavItem {
   id: AppView;
-  label: string;
+  labelKey: TranslationKey;
   icon: typeof Home;
   badge?: number;
 }
 
 export const workspaceItems: NavItem[] = [
-  { id: 'dashboard', label: 'Dashboard', icon: Home },
-  { id: 'discussions', label: 'Discussions', icon: MessageCircle },
-  { id: 'decisions', label: 'Decisions', icon: LayoutGrid },
-  { id: 'polls', label: 'Polls', icon: BarChart3 },
-  { id: 'actions', label: 'Actions', icon: CheckSquare },
-  { id: 'resources', label: 'Resources', icon: Folder },
+  { id: 'dashboard', labelKey: 'nav_dashboard', icon: Home },
+  { id: 'discussions', labelKey: 'nav_discussions', icon: MessageCircle },
+  { id: 'decisions', labelKey: 'nav_decisions', icon: LayoutGrid },
+  { id: 'polls', labelKey: 'nav_polls', icon: BarChart3 },
+  { id: 'actions', labelKey: 'nav_actions', icon: CheckSquare },
+  { id: 'resources', labelKey: 'nav_resources', icon: Folder },
 ];
 
 export const intelligenceItems: NavItem[] = [
-  { id: 'pulse-ai', label: 'PULSE AI', icon: Sparkles },
-  { id: 'risks', label: 'Risks', icon: ShieldAlert },
-  { id: 'analytics', label: 'Analytics', icon: PieChart },
-  { id: 'meeting-summaries', label: 'Meeting Summaries', icon: ClipboardList },
+  { id: 'pulse-ai', labelKey: 'nav_pulse_ai', icon: Sparkles },
+  { id: 'risks', labelKey: 'nav_risks', icon: ShieldAlert },
+  { id: 'analytics', labelKey: 'nav_analytics', icon: PieChart },
+  { id: 'meeting-summaries', labelKey: 'nav_meeting_summaries', icon: ClipboardList },
 ];
 
 export const teamItems: NavItem[] = [
-  { id: 'team', label: 'Team', icon: Users },
-  { id: 'notifications', label: 'Notifications', icon: Bell },
-  { id: 'invitations', label: 'Invitations', icon: UserPlus },
-  { id: 'audit-log', label: 'Audit Log', icon: History },
+  { id: 'team', labelKey: 'nav_team', icon: Users },
+  { id: 'notifications', labelKey: 'nav_notifications', icon: Bell },
+  { id: 'invitations', labelKey: 'nav_invitations', icon: UserPlus },
+  { id: 'audit-log', labelKey: 'nav_audit_log', icon: History },
 ];
 
 export const toolItems: NavItem[] = [
-  { id: 'settings', label: 'Settings', icon: Settings },
-  { id: 'integrations', label: 'Integrations', icon: Plug },
-  { id: 'help', label: 'Help & Support', icon: HelpCircle },
+  { id: 'settings', labelKey: 'nav_settings', icon: Settings },
+  { id: 'integrations', labelKey: 'nav_integrations', icon: Plug },
+  { id: 'help', labelKey: 'nav_help', icon: HelpCircle },
 ];
 
 interface SidebarProps {
@@ -63,6 +65,7 @@ function NavSection({ title, items, view, onNavigate, badges, collapsed }: {
   title: string; items: NavItem[]; view: AppView; onNavigate: (v: AppView) => void;
   badges: SidebarProps['badges']; collapsed: boolean;
 }) {
+  const { t } = useTranslation();
   const badgeFor = (id: AppView) =>
     id === 'actions' ? badges.actions : id === 'risks' ? badges.risks : id === 'notifications' ? badges.notifications : id === 'invitations' ? badges.invitations : 0;
 
@@ -70,9 +73,10 @@ function NavSection({ title, items, view, onNavigate, badges, collapsed }: {
     <div className="mt-6 first:mt-0">
       {!collapsed && <p className="px-3 text-[10px] font-semibold uppercase tracking-[.2em] text-ink-600">{title}</p>}
       <div className="mt-2 space-y-0.5">
-        {items.map(({ id, label, icon: Icon }) => {
+        {items.map(({ id, labelKey, icon: Icon }) => {
           const active = view === id;
           const badge = badgeFor(id);
+          const label = t(labelKey);
           return (
             <button
               key={id}
@@ -99,6 +103,7 @@ function NavSection({ title, items, view, onNavigate, badges, collapsed }: {
 
 export function Sidebar({ view, onNavigate, workspaceName, workspaceRole, workspaces, activeWorkspaceId, onSwitchWorkspace, onCreateWorkspace, badges, collapsed, onToggleCollapsed, onOpenShortcuts, isPlatformAdmin }: SidebarProps) {
   const { user, signOut } = useAuth();
+  const { t } = useTranslation();
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const initials = workspaceName.slice(0, 2).toUpperCase();
@@ -155,7 +160,7 @@ export function Sidebar({ view, onNavigate, workspaceName, workspaceRole, worksp
         <NavSection title="Tools" items={toolItems} view={view} onNavigate={onNavigate} badges={badges} collapsed={collapsed} />
         {isPlatformAdmin && !collapsed && (
           <button onClick={() => onNavigate('platform-metrics')} className={`mt-0.5 flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium ${view === 'platform-metrics' ? 'bg-[#7c3aed]/15 text-pulse-200' : 'text-ink-400 hover:bg-white/5 hover:text-ink-100'}`}>
-            <TrendingUp className="h-4 w-4" /> Platform Metrics
+            <TrendingUp className="h-4 w-4" /> {t('nav_platform_metrics')}
           </button>
         )}
         {!collapsed && (
