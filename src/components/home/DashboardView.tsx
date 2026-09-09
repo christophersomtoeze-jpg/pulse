@@ -17,7 +17,7 @@ interface DashboardViewProps {
   dashboard: DashboardData;
   onNewDecision: () => void;
   onOpenDecision: (id: string) => void;
-  onNavigate: (view: 'decisions' | 'discussions' | 'polls' | 'actions' | 'risks' | 'team' | 'pulse-ai') => void;
+  onNavigate: (view: 'decisions' | 'discussions' | 'polls' | 'actions' | 'risks' | 'team' | 'pulse-ai'|'audit-log') => void;
 }
 
 function formatDate(value: string | null) {
