@@ -5,7 +5,7 @@
 3. In Authentication > URL Configuration, add your Render URL as the Site URL and add your local URL to Redirect URLs.
 4. Copy the project URL and anon/publishable key into Render environment variables:
    - `VITE_SUPABASE_URL`
-   - `VITE_SUPABASE_ANON_KEY`
+   - `VITE_SUPABASE_PUBLISHABLE_KEY`
 5. Redeploy PULSE on Render.
 
 Never put a Supabase service-role key in this React app or in GitHub.
@@ -42,7 +42,7 @@ Get the secret key from Stripe Dashboard > Developers > API keys, the price IDs 
 
 Until these are set, the "Upgrade" buttons in Settings > Billing show a clear error instead of silently failing.
 
-## Phase 6 — Slack (fully wired) + the integrations framework
+## Phase 6 — Real integrations
 Slack is the one integration that's completely built end-to-end. To activate it:
 
 1. Create an app at https://api.slack.com/apps
@@ -61,10 +61,10 @@ supabase functions deploy slack-events --no-verify-jwt
 
 Also add to Render's environment variables: `VITE_SLACK_CLIENT_ID` (same value as `SLACK_CLIENT_ID`).
 
-Teams, Google, Microsoft 365, Jira, and Notion are **not** built yet — they show "Not yet built" in the Integrations screen rather than a fake "Connect" button. Each would need its own OAuth app registration exactly like Slack's above, plus a dedicated edge function for its API. Ask for any of these by name when you're ready and it can be built as a real, working integration the same way Slack was.
+Google Workspace, Microsoft 365 + Teams, Jira, Notion, and Slack now have real connection code in this ZIP. They are **not live until you create the provider app/token and configure the required Supabase/Render secrets**. The Integrations screen intentionally shows a provider as connected only after a successful OAuth/token verification writes a connected row to Supabase.
 
 ## Security note on integration tokens
-`workspace_integrations.access_token` is currently stored in plaintext in Postgres. Before connecting a real Slack workspace (or any future integration) in production, move this column to use Supabase Vault (pgsodium) so tokens are encrypted at rest. This wasn't set up here because it requires an extra one-time `vault` extension setup step in your specific project — flagging it explicitly rather than silently shipping plaintext secrets.
+`workspace_integrations.access_token` is currently stored in plaintext in Postgres. **Do not treat this as production-ready for real customer workspaces yet.** Before launch, move provider tokens to Supabase Vault/another approved secret-encryption design, rotate any credentials used during testing, and audit every integration RLS path.
 
 ## Founder Metrics (Platform Metrics in the sidebar)
 This is visible only to you, never to workspace members. After running the latest `schema.sql`, make yourself a platform admin (run once, in SQL Editor, replacing the email):

@@ -83,3 +83,10 @@ With one person working consistently alongside an AI coding assistant:
 - Mature SaaS with billing, mobile, AI and scale hardening: ~5–9+ months
 
 The exact timeline depends mainly on backend scope, authentication, billing, native mobile requirements and the level of AI functionality.
+
+
+## Current integration status
+
+The repository contains real integration flows for Slack, Google Workspace, Microsoft 365/Teams, Jira, and Notion. Provider credentials are intentionally **not** included. Add the browser-safe provider client IDs to Render and keep all client secrets/tokens in Supabase Edge Function secrets. A provider is only marked Connected after its callback/token verification succeeds.
+
+Supabase browser configuration uses `VITE_SUPABASE_PUBLISHABLE_KEY` (preferred). The legacy `VITE_SUPABASE_ANON_KEY` remains a temporary fallback for existing deployments.

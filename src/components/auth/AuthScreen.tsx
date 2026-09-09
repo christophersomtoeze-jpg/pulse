@@ -105,7 +105,7 @@ export function AuthScreen() {
 
           {!configured && (
             <div className="mt-4 rounded-xl border border-alert-500/30 bg-alert-500/10 p-3 text-xs text-alert-300">
-              Supabase is not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY, and enable Google/Microsoft/Apple providers in Supabase Auth settings, before these buttons will work.
+              Supabase is not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY, and enable Google/Microsoft/Apple providers in Supabase Auth settings, before these buttons will work.
             </div>
           )}
 

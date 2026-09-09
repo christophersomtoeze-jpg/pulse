@@ -49,7 +49,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     loading,
     configured: isSupabaseConfigured,
     signIn: async (email, password) => {
-      if (!supabase) return { error: 'Supabase is not configured yet. Add your VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.' };
+      if (!supabase) return { error: 'Supabase is not configured yet. Add your VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY.' };
       const { error } = await supabase.auth.signInWithPassword({ email, password });
       return { error: error?.message ?? null };
     },
