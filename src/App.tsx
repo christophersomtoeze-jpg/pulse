@@ -8,6 +8,7 @@ import { Sidebar } from '@/components/layout/Sidebar';
 import { NavDrawer } from '@/components/home/NavDrawer';
 import { HomeHeader } from '@/components/home/HomeHeader';
 import { HomeFeed } from '@/components/home/HomeFeed';
+import { DashboardView } from '@/components/home/DashboardView';
 import { MessageComposer } from '@/components/home/MessageComposer';
 import { GlobalSearchModal } from '@/components/GlobalSearchModal';
 import { PollsView } from '@/components/views/PollsView';
@@ -42,7 +43,7 @@ import {
   type WorkspaceMember, type DashboardData,
 } from '@/lib/pulseApi';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
-import type { ActivePoll, DecisionSummary, IntentWave, TopicNode, WorkspaceListItem } from '@/types';
+import type { ActivePoll, DecisionSummary, IntentWave, TopicNode, WorkspaceListItem, WorkspaceAction } from '@/types';
 
 const ACTIVE_WORKSPACE_KEY = 'pulse:active-workspace-id';
 const intentLabels: Record<IntentWave, string> = { whisper: 'Whisper', standard: 'Standard', pulse: 'Pulse Alert' };
@@ -140,6 +141,7 @@ function AppShell() {
   const [aiEnabled, setAiEnabled] = useState(true);
   const [language, setLanguage] = useState('en');
   const [dashboard, setDashboard] = useState<DashboardData>({ waitingForYou: [], decidedByYou: [], upcomingDeadlines: [], teamActivity: [] });
+  const [actions, setActions] = useState<WorkspaceAction[]>([]);
 
   const [view, setView] = useState<AppView>('dashboard');
   const [navOpen, setNavOpen] = useState(false);
@@ -165,6 +167,7 @@ function AppShell() {
     if (wsData) { setTopics(wsData.topics); setPolls(wsData.polls); }
     setDecisions(decisionRows);
     setPendingInviteCount(invites.filter((i) => i.status === 'pending').length);
+    setActions(myActions);
     setMyOpenActionCount(myActions.filter((a) => a.status !== 'done' && a.ownerId === user?.id).length);
     setRiskCount(risks.length);
     if (user) setDashboard(await loadDashboardData(workspaceId, user.id));
@@ -321,7 +324,34 @@ function AppShell() {
             onInvite={() => setView('invitations')}
           />
         )}
-        {(view === 'dashboard' || view === 'discussions') && (
+        {view === 'dashboard' && workspace && (
+          <DashboardView
+            workspaceName={workspace.name}
+            members={members}
+            decisions={decisions}
+            polls={polls}
+            topics={topics}
+            actions={actions}
+            risks={riskCount}
+            dashboard={dashboard}
+            onNewDecision={() => setShowNewDecision(true)}
+            onOpenDecision={openDecision}
+            onNavigate={setView}
+          />
+        )}
+        {view === 'dashboard' && !workspace && (
+          <HomeFeed
+            topics={topics}
+            decisions={decisions}
+            polls={polls}
+            resources={demoResources}
+            onSelectTopic={setSelectedTopic}
+            onViewAllDecisions={() => setView('decisions')}
+            onVoteNow={() => setView('polls')}
+            onOpenResourceHub={() => setView('resources')}
+          />
+        )}
+        {view === 'discussions' && (
           <HomeFeed
             topics={topics}
             decisions={decisions}
