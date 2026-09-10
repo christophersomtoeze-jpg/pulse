@@ -199,7 +199,14 @@ export interface AnalyticsSnapshot {
   completedDecisions: number;
   participationPct: number;
   overdueActions: number;
+  activeDecisions: number;
+  decisionOutcomeRate: number;
+  actionCompletionRate: number;
+  decisionsLast7d: number;
+  decisionsPrevious7d: number;
+  alignmentPct: number;
   discussionActivity: { label: string; count: number }[];
+  topBottlenecks: { label: string; count: number; detail: string }[];
 }
 
 export type SubscriptionPlan = 'free' | 'pro' | 'business' | 'enterprise';

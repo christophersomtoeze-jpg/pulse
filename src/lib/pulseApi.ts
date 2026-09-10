@@ -931,15 +931,30 @@ export async function listAuditLog(workspaceId: string): Promise<AuditLogEntry[]
 // ============================================================================
 
 export async function computeAnalytics(workspaceId: string): Promise<AnalyticsSnapshot> {
-  const empty: AnalyticsSnapshot = { decisionsThisMonth: 0, avgDecisionDays: null, stuckDecisions: 0, completedDecisions: 0, participationPct: 0, overdueActions: 0, discussionActivity: [] };
+  const empty: AnalyticsSnapshot = {
+    decisionsThisMonth: 0,
+    avgDecisionDays: null,
+    stuckDecisions: 0,
+    completedDecisions: 0,
+    participationPct: 0,
+    overdueActions: 0,
+    activeDecisions: 0,
+    decisionOutcomeRate: 0,
+    actionCompletionRate: 0,
+    decisionsLast7d: 0,
+    decisionsPrevious7d: 0,
+    alignmentPct: 0,
+    discussionActivity: [],
+    topBottlenecks: [],
+  };
   if (!supabase) return empty;
 
   const [decisionsRes, membersRes, votesRes, actionsRes, messagesRes] = await Promise.all([
-    supabase.from('decisions').select('id,created_at,decided_at,outcome').eq('workspace_id', workspaceId),
+    supabase.from('decisions').select('id,title,created_at,decided_at,outcome').eq('workspace_id', workspaceId),
     supabase.from('workspace_members').select('user_id').eq('workspace_id', workspaceId),
-    supabase.from('decision_votes').select('user_id,decision_id'),
-    supabase.from('actions').select('id,deadline,status').eq('workspace_id', workspaceId),
-    supabase.from('messages').select('id,created_at,discussion_id,discussions!inner(workspace_id)').eq('discussions.workspace_id', workspaceId).limit(500),
+    supabase.from('decision_votes').select('user_id,decision_id,choice,created_at,decisions!inner(workspace_id)').eq('decisions.workspace_id', workspaceId),
+    supabase.from('actions').select('id,title,deadline,status,created_at').eq('workspace_id', workspaceId),
+    supabase.from('messages').select('id,created_at,discussion_id,discussions!inner(workspace_id)').eq('discussions.workspace_id', workspaceId).limit(1000),
   ]);
   if (decisionsRes.error) throw new Error(decisionsRes.error.message);
   if (membersRes.error) throw new Error(membersRes.error.message);
@@ -947,35 +962,100 @@ export async function computeAnalytics(workspaceId: string): Promise<AnalyticsSn
   if (actionsRes.error) throw new Error(actionsRes.error.message);
 
   const decisions = decisionsRes.data ?? [];
-  const now = new Date();
-  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+  const actions = actionsRes.data ?? [];
+  const now = Date.now();
+  const date = new Date(now);
+  const monthStart = new Date(date.getFullYear(), date.getMonth(), 1).getTime();
+  const sevenDaysAgo = now - 7 * 86400000;
+  const fourteenDaysAgo = now - 14 * 86400000;
+
   const decisionsThisMonth = decisions.filter((d) => new Date(d.created_at).getTime() >= monthStart).length;
+  const decisionsLast7d = decisions.filter((d) => new Date(d.created_at).getTime() >= sevenDaysAgo).length;
+  const decisionsPrevious7d = decisions.filter((d) => {
+    const t = new Date(d.created_at).getTime();
+    return t >= fourteenDaysAgo && t < sevenDaysAgo;
+  }).length;
 
   const decidedOnes = decisions.filter((d) => d.decided_at);
   const avgDecisionDays = decidedOnes.length
     ? decidedOnes.reduce((sum, d) => sum + (new Date(d.decided_at!).getTime() - new Date(d.created_at).getTime()), 0) / decidedOnes.length / 86400000
     : null;
 
-  const stuckDecisions = decisions.filter((d) => !d.outcome && (Date.now() - new Date(d.created_at).getTime()) / 86400000 >= 7).length;
-  const completedDecisions = decisions.filter((d) => d.outcome).length;
+  const activeDecisions = decisions.filter((d) => !d.outcome).length;
+  const stuckDecisions = decisions.filter((d) => !d.outcome && (now - new Date(d.created_at).getTime()) / 86400000 >= 7).length;
+  const completedDecisions = decisions.filter((d) => Boolean(d.outcome)).length;
+  const decisionOutcomeRate = decisions.length ? Math.round((completedDecisions / decisions.length) * 100) : 0;
 
   const memberIds = new Set((membersRes.data ?? []).map((m) => m.user_id));
-  const votedIds = new Set((votesRes.data ?? []).map((v) => v.user_id));
-  const participationPct = memberIds.size ? Math.round(([...memberIds].filter((id) => votedIds.has(id)).length / memberIds.size) * 100) : 0;
+  const recentVoters = new Set(
+    (votesRes.data ?? [])
+      .filter((v) => new Date(v.created_at).getTime() >= sevenDaysAgo)
+      .map((v) => v.user_id),
+  );
+  const participationPct = memberIds.size
+    ? Math.round(([...memberIds].filter((id) => recentVoters.has(id)).length / memberIds.size) * 100)
+    : 0;
 
-  const overdueActions = (actionsRes.data ?? []).filter((a) => a.status !== 'done' && a.deadline && new Date(a.deadline).getTime() < Date.now()).length;
+  const activeActions = actions.filter((a) => a.status !== 'done');
+  const completedActions = actions.filter((a) => a.status === 'done').length;
+  const actionCompletionRate = actions.length ? Math.round((completedActions / actions.length) * 100) : 0;
+  const overdueActions = activeActions.filter((a) => a.deadline && new Date(a.deadline).getTime() < now).length;
+
+  const voteRows = (votesRes.data ?? []) as { decision_id: string; choice: string }[];
+  const byDecision = new Map<string, { yes: number; no: number; total: number }>();
+  for (const vote of voteRows) {
+    if (vote.choice === 'needs_info') continue;
+    const current = byDecision.get(vote.decision_id) ?? { yes: 0, no: 0, total: 0 };
+    if (vote.choice === 'yes') current.yes += 1;
+    if (vote.choice === 'no') current.no += 1;
+    current.total += 1;
+    byDecision.set(vote.decision_id, current);
+  }
+  const alignmentScores = [...byDecision.values()].filter((v) => v.total > 0).map((v) => Math.max(v.yes, v.no) / v.total * 100);
+  const alignmentPct = alignmentScores.length ? Math.round(alignmentScores.reduce((a, b) => a + b, 0) / alignmentScores.length) : 0;
 
   const discussionActivity: { label: string; count: number }[] = [];
   if (!messagesRes.error) {
     const byDay = new Map<string, number>();
-    for (const m of messagesRes.data ?? []) {
-      const day = new Date(m.created_at).toLocaleDateString('en-US', { weekday: 'short' });
-      byDay.set(day, (byDay.get(day) ?? 0) + 1);
+    for (let i = 13; i >= 0; i -= 1) {
+      const d = new Date(now - i * 86400000);
+      byDay.set(d.toISOString().slice(0, 10), 0);
     }
-    for (const [label, count] of byDay) discussionActivity.push({ label, count });
+    for (const m of messagesRes.data ?? []) {
+      const key = new Date(m.created_at).toISOString().slice(0, 10);
+      if (byDay.has(key)) byDay.set(key, (byDay.get(key) ?? 0) + 1);
+    }
+    for (const [key, count] of byDay) {
+      const d = new Date(`${key}T00:00:00`);
+      discussionActivity.push({ label: d.toLocaleDateString('en-US', { weekday: 'short' }), count });
+    }
   }
 
-  return { decisionsThisMonth, avgDecisionDays, stuckDecisions, completedDecisions, participationPct, overdueActions, discussionActivity };
+  const bottlenecks: { label: string; count: number; detail: string }[] = [];
+  if (stuckDecisions > 0) bottlenecks.push({ label: 'Stalled decisions', count: stuckDecisions, detail: 'Open for 7+ days without an outcome.' });
+  if (overdueActions > 0) bottlenecks.push({ label: 'Overdue actions', count: overdueActions, detail: 'Open actions have passed their deadline.' });
+  const splitDecisions = [...byDecision.values()].filter((v) => v.total >= 3 && Math.abs(v.yes - v.no) / v.total <= 0.2).length;
+  if (splitDecisions > 0) bottlenecks.push({ label: 'Low alignment', count: splitDecisions, detail: 'Decisions have closely split yes/no votes.' });
+  const lowParticipation = memberIds.size > 0 && participationPct < 50;
+  if (lowParticipation) bottlenecks.push({ label: 'Low participation', count: memberIds.size, detail: 'Less than half of members voted in the last 7 days.' });
+  bottlenecks.sort((a, b) => b.count - a.count);
+
+  return {
+    decisionsThisMonth,
+    avgDecisionDays,
+    stuckDecisions,
+    completedDecisions,
+    participationPct,
+    overdueActions,
+    activeDecisions,
+    decisionOutcomeRate,
+    actionCompletionRate,
+    decisionsLast7d,
+    decisionsPrevious7d,
+    alignmentPct,
+    discussionActivity,
+    topBottlenecks: bottlenecks.slice(0, 4),
+  };
 }
 
 // ============================================================================
