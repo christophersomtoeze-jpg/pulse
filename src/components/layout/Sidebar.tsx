@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import {
-  Activity, BarChart3, Bell, CheckSquare, ChevronDown, ClipboardList, Folder, HelpCircle,
+  Activity, BarChart3, Bell, Brain, CheckSquare, ChevronDown, ClipboardList, Folder, HelpCircle,
   History, Home, Keyboard, LayoutGrid, MessageCircle, MoreVertical, Plug, PanelLeftClose,
   PanelLeftOpen, PieChart, Settings, ShieldAlert, Sparkles, TrendingUp, UserPlus, Users,
 } from 'lucide-react';
@@ -29,6 +29,7 @@ export const intelligenceItems: NavItem[] = [
   { id: 'pulse-ai', labelKey: 'nav_pulse_ai', icon: Sparkles },
   { id: 'risks', labelKey: 'nav_risks', icon: ShieldAlert },
   { id: 'analytics', labelKey: 'nav_analytics', icon: PieChart },
+  { id: 'memory', labelKey: 'nav_memory', icon: Brain },
   { id: 'meeting-summaries', labelKey: 'nav_meeting_summaries', icon: ClipboardList },
 ];
 

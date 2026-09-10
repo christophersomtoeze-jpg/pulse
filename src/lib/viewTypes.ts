@@ -8,6 +8,7 @@ export type AppView =
   | 'pulse-ai'
   | 'risks'
   | 'analytics'
+  | 'memory'
   | 'meeting-summaries'
   | 'team'
   | 'notifications'

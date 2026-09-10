@@ -18,6 +18,7 @@ import { PulseAIView } from '@/components/views/PulseAIView';
 import { RiskCenterView } from '@/components/views/RiskCenterView';
 import { MeetingSummariesView } from '@/components/views/MeetingSummariesView';
 import { AnalyticsView } from '@/components/views/AnalyticsView';
+import { MemoryView } from '@/components/views/MemoryView';
 import { AuditLogView } from '@/components/views/AuditLogView';
 import { IntegrationsView } from '@/components/views/IntegrationsView';
 import { NotificationsView } from '@/components/views/NotificationsView';
@@ -377,7 +378,9 @@ function AppShell() {
         {view === 'risks' && workspace && <RiskCenterView workspaceId={workspace.id} onNavigate={setView} onOpenDecision={openDecision} />}
         {view === 'risks' && !workspace && <ComingSoonView icon={Sparkles} phase="Connect Supabase" title="Risk Center needs a workspace" description="Risk detection runs against your real discussions, votes, and actions." />}
         {view === 'analytics' && workspace && <AnalyticsView workspaceId={workspace.id} />}
+        {view === 'memory' && workspace && <MemoryView workspaceId={workspace.id} onOpenDecision={openDecision} />}
         {view === 'analytics' && !workspace && <ComingSoonView icon={Sparkles} phase="Connect Supabase" title="Analytics needs a workspace" description="Every number here is computed from your real workspace activity." />}
+        {view === 'memory' && !workspace && <ComingSoonView icon={Sparkles} phase="Connect Supabase" title="Memory needs a workspace" description="PULSE Memory preserves the history and reasoning behind real workspace decisions." />}
         {view === 'meeting-summaries' && workspace && <MeetingSummariesView workspaceId={workspace.id} aiEnabled={aiEnabled} />}
         {view === 'meeting-summaries' && !workspace && <ComingSoonView icon={Sparkles} phase="Connect Supabase" title="Meeting Summaries need a workspace" description="Sign in and create a workspace, then deploy the meeting-summary function." />}
         {view === 'team' && workspace && <TeamView workspaceId={workspace.id} />}

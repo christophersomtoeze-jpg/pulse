@@ -15,7 +15,8 @@ export const translations = {
   en: {
     nav_dashboard: 'Dashboard', nav_discussions: 'Discussions', nav_decisions: 'Decisions',
     nav_polls: 'Polls', nav_actions: 'Actions', nav_resources: 'Resources',
-    nav_pulse_ai: 'PULSE AI', nav_risks: 'Risks', nav_analytics: 'Analytics', nav_meeting_summaries: 'Meeting Summaries',
+    nav_pulse_ai: 'PULSE AI', nav_risks: 'Risks', nav_analytics: 'Analytics',
+    nav_memory: 'Memory', nav_meeting_summaries: 'Meeting Summaries',
     nav_team: 'Team', nav_notifications: 'Notifications', nav_invitations: 'Invitations',
     nav_audit_log: 'Audit Log', nav_settings: 'Settings', nav_integrations: 'Integrations', nav_help: 'Help & Support',
     nav_platform_metrics: 'Platform Metrics',
@@ -34,7 +35,8 @@ export const translations = {
   es: {
     nav_dashboard: 'Panel', nav_discussions: 'Debates', nav_decisions: 'Decisiones',
     nav_polls: 'Encuestas', nav_actions: 'Acciones', nav_resources: 'Recursos',
-    nav_pulse_ai: 'PULSE IA', nav_risks: 'Riesgos', nav_analytics: 'Analítica', nav_meeting_summaries: 'Resúmenes de reuniones',
+    nav_pulse_ai: 'PULSE IA', nav_risks: 'Riesgos', nav_analytics: 'Analítica',
+    nav_memory: 'Memoria', nav_meeting_summaries: 'Resúmenes de reuniones',
     nav_team: 'Equipo', nav_notifications: 'Notificaciones', nav_invitations: 'Invitaciones',
     nav_audit_log: 'Registro de auditoría', nav_settings: 'Configuración', nav_integrations: 'Integraciones', nav_help: 'Ayuda y soporte',
     nav_platform_metrics: 'Métricas de la plataforma',
@@ -53,7 +55,8 @@ export const translations = {
   fr: {
     nav_dashboard: 'Tableau de bord', nav_discussions: 'Discussions', nav_decisions: 'Décisions',
     nav_polls: 'Sondages', nav_actions: 'Actions', nav_resources: 'Ressources',
-    nav_pulse_ai: 'PULSE IA', nav_risks: 'Risques', nav_analytics: 'Analytique', nav_meeting_summaries: 'Comptes rendus de réunion',
+    nav_pulse_ai: 'PULSE IA', nav_risks: 'Risques', nav_analytics: 'Analytique',
+    nav_memory: 'Mémoire', nav_meeting_summaries: 'Comptes rendus de réunion',
     nav_team: 'Équipe', nav_notifications: 'Notifications', nav_invitations: 'Invitations',
     nav_audit_log: "Journal d'audit", nav_settings: 'Paramètres', nav_integrations: 'Intégrations', nav_help: 'Aide et support',
     nav_platform_metrics: 'Statistiques de la plateforme',
@@ -72,7 +75,8 @@ export const translations = {
   pt: {
     nav_dashboard: 'Painel', nav_discussions: 'Discussões', nav_decisions: 'Decisões',
     nav_polls: 'Enquetes', nav_actions: 'Ações', nav_resources: 'Recursos',
-    nav_pulse_ai: 'PULSE IA', nav_risks: 'Riscos', nav_analytics: 'Análises', nav_meeting_summaries: 'Resumos de reuniões',
+    nav_pulse_ai: 'PULSE IA', nav_risks: 'Riscos', nav_analytics: 'Análises',
+    nav_memory: 'Memória', nav_meeting_summaries: 'Resumos de reuniões',
     nav_team: 'Equipe', nav_notifications: 'Notificações', nav_invitations: 'Convites',
     nav_audit_log: 'Registro de auditoria', nav_settings: 'Configurações', nav_integrations: 'Integrações', nav_help: 'Ajuda e suporte',
     nav_platform_metrics: 'Métricas da plataforma',
