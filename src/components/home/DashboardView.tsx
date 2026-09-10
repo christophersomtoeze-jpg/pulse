@@ -1,7 +1,7 @@
 import { motion } from 'framer-motion';
 import {
   Activity, ArrowRight, CheckCircle2, Clock3, MessageCircle, Plus, ShieldAlert,
-  Sparkles, Target, Users, Vote,
+  Sparkles, Target, Users, Vote, Brain, AlertTriangle, TrendingUp, ChevronRight,
 } from 'lucide-react';
 import type { ActivePoll, DecisionSummary, DecisionHistoryEntry, TopicNode, WorkspaceAction } from '@/types';
 import type { WorkspaceMember, DashboardData } from '@/lib/pulseApi';
@@ -23,6 +23,18 @@ interface DashboardViewProps {
 function formatDate(value: string | null) {
   if (!value) return 'No deadline';
   return new Date(value).toLocaleDateString([], { month: 'short', day: 'numeric' });
+}
+
+function healthTone(score: number) {
+  if (score >= 80) return { label: 'Healthy', text: 'text-flux-300', bar: 'bg-flux-400' };
+  if (score >= 60) return { label: 'Watch', text: 'text-alert-300', bar: 'bg-alert-400' };
+  return { label: 'At risk', text: 'text-ember-300', bar: 'bg-ember-400' };
+}
+
+function priorityLabel(item: DecisionSummary, waiting: boolean) {
+  if (waiting) return { label: 'Needs your vote', cls: 'text-alert-300 bg-alert-500/10 border-alert-500/15' };
+  if (item.deadline && new Date(item.deadline).getTime() < Date.now()) return { label: 'Past deadline', cls: 'text-ember-300 bg-ember-500/10 border-ember-500/15' };
+  return { label: 'Open', cls: 'text-pulse-300 bg-[#7c3aed]/10 border-[#7c3aed]/15' };
 }
 
 function ActivityRow({ item }: { item: DecisionHistoryEntry }) {
@@ -48,6 +60,20 @@ export function DashboardView({ workspaceName, members, decisions, polls, topics
   const completedDecisions = decisions.filter((d) => Boolean(d.outcome));
   const openActions = actions.filter((a) => a.status !== 'done');
   const overdueActions = actions.filter((a) => a.status !== 'done' && a.deadline && new Date(a.deadline).getTime() < Date.now());
+
+  const waitingIds = new Set(dashboard.waitingForYou.map((d) => d.id));
+  const highPressureDecisions = openDecisions
+    .map((d) => ({ decision: d, waiting: waitingIds.has(d.id) }))
+    .sort((a, b) => {
+      const score = (x: { decision: DecisionSummary; waiting: boolean }) =>
+        (x.waiting ? 50 : 0) + (x.decision.deadline ? Math.max(0, 30 - Math.max(0, Math.round((new Date(x.decision.deadline).getTime() - Date.now()) / 86400000))) : 0);
+      return score(b) - score(a);
+    })
+    .slice(0, 4);
+
+  const pressure = Math.min(100, dashboard.waitingForYou.length * 12 + overdueActions.length * 15 + risks * 10);
+  const intelligenceScore = Math.max(0, Math.min(100, 100 - pressure));
+  const health = healthTone(intelligenceScore);
 
   const cards = [
     { label: 'Open decisions', value: openDecisions.length, icon: Target, action: () => onNavigate('decisions') },
@@ -76,6 +102,50 @@ export function DashboardView({ workspaceName, members, decisions, polls, topics
           </motion.button>
         ))}
       </div>
+
+      <section className="mt-5 glass-strong overflow-hidden rounded-3xl p-5">
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div className="flex items-start gap-3">
+            <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-gradient-to-br from-[#7c3aed]/20 to-[#06b6d4]/15 text-pulse-300 shadow-glow">
+              <Brain className="h-5 w-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2"><h2 className="font-display text-base font-semibold">Decision intelligence</h2><span className="rounded-full border border-white/5 bg-white/[.03] px-2 py-0.5 text-[9px] uppercase tracking-wider text-ink-500">Live signal</span></div>
+              <p className="mt-1 max-w-2xl text-xs text-ink-500">PULSE combines decision pressure, team alignment signals, deadlines and active risks into one workspace health signal.</p>
+            </div>
+          </div>
+          <button onClick={() => onNavigate('pulse-ai')} className="primary-btn shrink-0 justify-center"><Sparkles className="h-4 w-4" /> Ask PULSE</button>
+        </div>
+
+        <div className="mt-5 grid gap-4 lg:grid-cols-[.8fr_1.2fr]">
+          <div className="rounded-2xl border border-white/5 bg-black/20 p-4">
+            <div className="flex items-end justify-between"><div><p className="text-[10px] uppercase tracking-[.2em] text-ink-600">Workspace health</p><p className={`mt-2 text-4xl font-semibold ${health.text}`}>{intelligenceScore}</p></div><span className={`mb-1 rounded-full border border-white/5 px-2 py-1 text-[10px] font-semibold ${health.text}`}>{health.label}</span></div>
+            <div className="mt-4 h-2 overflow-hidden rounded-full bg-white/5"><div className={`h-full rounded-full ${health.bar} transition-all`} style={{ width: `${intelligenceScore}%` }} /></div>
+            <div className="mt-3 flex justify-between text-[10px] text-ink-600"><span>Pressure {pressure}</span><span>100 = healthy</span></div>
+          </div>
+
+          <div className="rounded-2xl border border-white/5 bg-black/20 p-4">
+            <div className="flex items-center justify-between"><div><p className="text-[10px] uppercase tracking-[.2em] text-ink-600">Priority queue</p><p className="mt-1 text-xs text-ink-500">What PULSE thinks deserves attention first.</p></div><TrendingUp className="h-4 w-4 text-pulse-300" /></div>
+            <div className="mt-3 space-y-2">
+              {highPressureDecisions.map(({ decision, waiting }) => { const p = priorityLabel(decision, waiting); return (
+                <button key={decision.id} onClick={() => onOpenDecision(decision.id)} className="group flex w-full items-center gap-3 rounded-xl border border-white/5 bg-white/[.02] p-2.5 text-left hover:border-[#7c3aed]/25">
+                  <div className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-[#7c3aed]/10 text-pulse-300"><Target className="h-3.5 w-3.5" /></div>
+                  <div className="min-w-0 flex-1"><p className="truncate text-xs font-medium text-ink-200">{decision.title}</p><p className="mt-1 truncate text-[10px] text-ink-600">{decision.description || 'No description yet'}</p></div>
+                  <span className={`hidden shrink-0 rounded-full border px-2 py-1 text-[9px] sm:inline-flex ${p.cls}`}>{p.label}</span><ChevronRight className="h-3.5 w-3.5 shrink-0 text-ink-600 group-hover:text-pulse-300" />
+                </button>
+              ); })}
+              {highPressureDecisions.length === 0 && <div className="flex items-center gap-3 rounded-xl border border-flux-500/15 bg-flux-500/5 p-3"><CheckCircle2 className="h-4 w-4 text-flux-300" /><p className="text-xs text-ink-300">No urgent decisions detected. Your workspace is clear.</p></div>}
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-4 grid grid-cols-2 gap-2 md:grid-cols-4">
+          <div className="rounded-xl border border-white/5 bg-white/[.02] p-3"><AlertTriangle className="h-3.5 w-3.5 text-ember-300" /><p className="mt-2 text-lg font-semibold">{risks}</p><p className="text-[9px] uppercase tracking-wider text-ink-600">Active risks</p></div>
+          <div className="rounded-xl border border-white/5 bg-white/[.02] p-3"><Clock3 className="h-3.5 w-3.5 text-alert-300" /><p className="mt-2 text-lg font-semibold">{dashboard.waitingForYou.length}</p><p className="text-[9px] uppercase tracking-wider text-ink-600">Waiting on you</p></div>
+          <div className="rounded-xl border border-white/5 bg-white/[.02] p-3"><CheckCircle2 className="h-3.5 w-3.5 text-pulse-300" /><p className="mt-2 text-lg font-semibold">{overdueActions.length}</p><p className="text-[9px] uppercase tracking-wider text-ink-600">Overdue actions</p></div>
+          <div className="rounded-xl border border-white/5 bg-white/[.02] p-3"><Target className="h-3.5 w-3.5 text-flux-300" /><p className="mt-2 text-lg font-semibold">{completedDecisions.length}</p><p className="text-[9px] uppercase tracking-wider text-ink-600">Decisions closed</p></div>
+        </div>
+      </section>
 
       <div className="mt-5 grid gap-5 xl:grid-cols-[1.35fr_.85fr]">
         <section className="glass-strong rounded-3xl p-5">
