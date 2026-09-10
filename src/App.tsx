@@ -374,7 +374,7 @@ function AppShell() {
         {view === 'actions' && !workspace && <ComingSoonView icon={Sparkles} phase="Connect Supabase" title="Actions need a workspace" description="Sign in and create a workspace to create and track real actions." />}
         {view === 'pulse-ai' && workspace && <PulseAIView workspaceId={workspace.id} aiEnabled={aiEnabled} />}
         {view === 'pulse-ai' && !workspace && <ComingSoonView icon={Sparkles} phase="Connect Supabase" title="PULSE AI needs a workspace" description="Sign in and create a workspace, then deploy the pulse-assistant function." />}
-        {view === 'risks' && workspace && <RiskCenterView workspaceId={workspace.id} />}
+        {view === 'risks' && workspace && <RiskCenterView workspaceId={workspace.id} onNavigate={setView} onOpenDecision={openDecision} />}
         {view === 'risks' && !workspace && <ComingSoonView icon={Sparkles} phase="Connect Supabase" title="Risk Center needs a workspace" description="Risk detection runs against your real discussions, votes, and actions." />}
         {view === 'analytics' && workspace && <AnalyticsView workspaceId={workspace.id} />}
         {view === 'analytics' && !workspace && <ComingSoonView icon={Sparkles} phase="Connect Supabase" title="Analytics needs a workspace" description="Every number here is computed from your real workspace activity." />}
