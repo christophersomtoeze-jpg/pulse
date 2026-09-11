@@ -52,3 +52,27 @@ Render should build the new commit automatically if the existing GitHub-to-Rende
 ## Important
 
 Do not commit `.env` or API keys. Keep Anthropic and other provider secrets in Supabase/Render secret configuration, not in frontend source code.
+
+## Phase 2 — Decision Graph map + Decision Brief
+
+The current build adds:
+- Decision Graph map toggle inside each Decision Room.
+- Decision Execution Package / Decision Brief modal.
+- Copy Markdown and download `.md` export for a decision.
+- The brief includes decision context, gate answers, vote tally, actions, resources, outcome reviews, and history.
+
+Before deployment:
+1. Run `npm install`.
+2. Run `npm run typecheck`.
+3. Run `npm run build`.
+4. Apply `schema.sql` in Supabase if you have not already applied the Phase 1 migration.
+
+Git:
+```bash
+git status
+git add .
+git commit -m "Build PULSE decision intelligence phase 2"
+git push origin main
+```
+
+Do not commit `.env`, API keys, Supabase service-role keys, or Anthropic keys.

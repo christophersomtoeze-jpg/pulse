@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Calendar, CheckSquare, ExternalLink, Link2, Plus, User, X } from 'lucide-react';
+import { Calendar, CheckSquare, ExternalLink, Link2, Package, Plus, User, X } from 'lucide-react';
 import { useAuth } from '@/auth/AuthProvider';
 import { supabase } from '@/lib/supabase';
 import {
@@ -18,6 +18,7 @@ import { AIInsightPanel } from './AIInsightPanel';
 import { OutcomeControls } from './OutcomeControls';
 import { ConnectedDecisionsPanel } from './ConnectedDecisionsPanel';
 import { OutcomeHistoryPanel } from './OutcomeHistoryPanel';
+import { DecisionExecutionPackage } from './DecisionExecutionPackage';
 
 const statusPill: Record<string, string> = {
   approved: 'text-flux-300 bg-flux-500/15 border-flux-500/30',
@@ -51,6 +52,7 @@ export function DecisionRoom({ decisionId, members, isAdmin, aiEnabled = true, o
   const [error, setError] = useState('');
   const [links, setLinks] = useState<DecisionLink[]>([]);
   const [outcomeReviews, setOutcomeReviews] = useState<DecisionOutcomeReview[]>([]);
+  const [showExecutionPackage, setShowExecutionPackage] = useState(false);
 
   const load = useCallback(async () => {
     if (!user) return;
@@ -127,7 +129,7 @@ export function DecisionRoom({ decisionId, members, isAdmin, aiEnabled = true, o
                 {decision.deadline && <span className="flex items-center gap-1"><Calendar className="h-3 w-3" /> Due {new Date(decision.deadline).toLocaleDateString()}</span>}
               </div>
             </div>
-            <button className="icon-btn shrink-0" onClick={onClose}><X /></button>
+            <div className="flex items-center gap-2 shrink-0"><button onClick={() => setShowExecutionPackage(true)} className="secondary-btn"><Package className="h-3.5 w-3.5" /> Brief</button><button className="icon-btn" onClick={onClose}><X /></button></div>
           </div>
 
           <div className="flex-1 space-y-5 overflow-y-auto p-5">
@@ -228,6 +230,17 @@ export function DecisionRoom({ decisionId, members, isAdmin, aiEnabled = true, o
               onSubmit={async (body, mentions, parentId) => { if (!user) return; await addDecisionComment(decision.id, user.id, body, mentions, parentId); load(); }}
             />
           </div>
+          <DecisionExecutionPackage
+            open={showExecutionPackage}
+            onClose={() => setShowExecutionPackage(false)}
+            decision={decision}
+            resources={resources}
+            actions={decisionActions}
+            comments={comments}
+            tally={tally}
+            history={history}
+            reviews={outcomeReviews}
+          />
         </motion.div>
       </div>
     </AnimatePresence>

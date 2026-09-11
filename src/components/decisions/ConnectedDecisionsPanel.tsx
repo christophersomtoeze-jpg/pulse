@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ArrowDown, ArrowUp, Link2, Plus, Trash2 } from 'lucide-react';
+import { ArrowDown, ArrowUp, ArrowRight, Link2, Plus, Trash2, Network } from 'lucide-react';
 import type { DecisionLink } from '@/types';
 import { deleteDecisionLink } from '@/lib/pulseApi';
 import { LinkDecisionModal } from './LinkDecisionModal';
@@ -20,6 +20,7 @@ export function ConnectedDecisionsPanel({
 }) {
   const [open, setOpen] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [showMap, setShowMap] = useState(false);
   const incoming = links.filter((l) => l.toDecisionId === decisionId);
   const outgoing = links.filter((l) => l.fromDecisionId === decisionId);
 
@@ -38,6 +39,22 @@ export function ConnectedDecisionsPanel({
         </div>
         {isAdmin && <button onClick={() => setOpen(true)} className="secondary-btn"><Plus className="h-3.5 w-3.5" /> Link</button>}
       </div>
+
+      <div className="mt-3 flex items-center justify-between rounded-xl border border-white/5 bg-white/[.02] px-3 py-2">
+        <div className="min-w-0"><p className="text-[10px] uppercase tracking-[.16em] text-ink-600">Decision graph</p><p className="truncate text-xs text-ink-400">{links.length ? `${links.length} connected edge${links.length === 1 ? '' : 's'}` : 'No edges yet'}</p></div>
+        <button onClick={() => setShowMap((v) => !v)} className="secondary-btn shrink-0"><Network className="h-3.5 w-3.5" /> {showMap ? 'List' : 'Map'}</button>
+      </div>
+      {showMap && links.length > 0 && (
+        <div className="rounded-2xl border border-pulse-500/10 bg-pulse-500/[.03] p-3">
+          <div className="flex flex-wrap items-center justify-center gap-2">
+            <div className="max-w-[45%] rounded-xl border border-pulse-500/30 bg-pulse-500/10 px-3 py-2 text-center text-xs font-semibold">This decision</div>
+            {links.map((link) => {
+              const other = link.fromDecisionId === decisionId ? link.toDecisionTitle : link.fromDecisionTitle;
+              return <div key={link.id} className="flex items-center gap-2"><span className="text-[10px] text-ink-600">{labels[link.relationshipType]}</span><ArrowRight className="h-3 w-3 text-ink-600" /><div className="max-w-[38%] rounded-xl border border-white/10 bg-white/[.03] px-3 py-2 text-center text-xs">{other ?? 'Linked decision'}</div></div>;
+            })}
+          </div>
+        </div>
+      )}
 
       <div className="mt-3 space-y-2">
         {outgoing.map((link) => (
