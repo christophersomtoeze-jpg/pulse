@@ -9,6 +9,7 @@ import type {
   ApiKeySummary, IncomingWebhookSummary, SsoDomainSummary,
   DecisionLink, DecisionRelationshipType, DecisionOutcomeReview, OutcomeReviewType, DecisionGateAnswers,
   RecommendedDecisionProcess, DecisionReversibility, DecisionUrgency,
+  DecisionIntelligence, DecisionRiskLevel,
 } from '@/types';
 import { supabase } from '@/lib/supabase';
 
@@ -800,6 +801,61 @@ export async function requestAIAnalysis(decisionId: string): Promise<DecisionAIA
     recommendation: data.recommendation ?? null,
     confidence: data.confidence ?? null,
     createdAt: data.createdAt ?? new Date().toISOString(),
+  };
+}
+
+export async function getLatestDecisionIntelligence(decisionId: string): Promise<DecisionIntelligence | null> {
+  if (!supabase) return null;
+  const { data, error } = await supabase
+    .from('decision_ai_analyses')
+    .select('id,decision_id,executive_summary,quality_score,risk_level,risk_reasons,evidence_gaps,strongest_arguments_list,disagreements_list,recommendation,next_actions,similar_decisions,graph_suggestions,confidence,created_at')
+    .eq('decision_id', decisionId)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  // Keep existing Decision Rooms usable until the new SQL migration is run.
+  if (error) {
+    if (/column .* does not exist|schema cache/i.test(error.message)) return null;
+    throw new Error(error.message);
+  }
+  if (!data) return null;
+  return mapDecisionIntelligence(data as Record<string, unknown>);
+}
+
+export async function requestDecisionIntelligence(decisionId: string): Promise<DecisionIntelligence> {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const { data, error } = await supabase.functions.invoke('decision-intelligence', { body: { decisionId } });
+  if (error) throw new Error(error.message);
+  return mapDecisionIntelligence(data as Record<string, unknown>);
+}
+
+function mapDecisionIntelligence(row: Record<string, unknown>): DecisionIntelligence {
+  const arrayOfStrings = (value: unknown) => Array.isArray(value) ? value.map(String).filter(Boolean) : [];
+  const similar = Array.isArray(row.similarDecisions ?? row.similar_decisions) ? (row.similarDecisions ?? row.similar_decisions) as unknown[] : [];
+  const graph = Array.isArray(row.graphSuggestions ?? row.graph_suggestions) ? (row.graphSuggestions ?? row.graph_suggestions) as unknown[] : [];
+  return {
+    id: String(row.id),
+    decisionId: String(row.decisionId ?? row.decision_id),
+    executiveSummary: String(row.executiveSummary ?? row.executive_summary ?? ''),
+    qualityScore: Math.max(0, Math.min(100, Number(row.qualityScore ?? row.quality_score ?? 0))),
+    riskLevel: (['low','medium','high'].includes(String(row.riskLevel ?? row.risk_level)) ? String(row.riskLevel ?? row.risk_level) : 'medium') as DecisionRiskLevel,
+    riskReasons: arrayOfStrings(row.riskReasons ?? row.risk_reasons),
+    evidenceGaps: arrayOfStrings(row.evidenceGaps ?? row.evidence_gaps),
+    strongestArguments: arrayOfStrings(row.strongestArgumentsList ?? row.strongest_arguments_list),
+    disagreements: arrayOfStrings(row.disagreementsList ?? row.disagreements_list),
+    recommendation: String(row.recommendation ?? ''),
+    nextActions: arrayOfStrings(row.nextActions ?? row.next_actions),
+    similarDecisions: similar.map((item) => {
+      const x = item as Record<string, unknown>;
+      return { decisionId: String(x.decisionId ?? x.decision_id), title: String(x.title ?? ''), reason: String(x.reason ?? ''), outcome: (x.outcome ?? null) as DecisionIntelligence['similarDecisions'][number]['outcome'], outcomeScore: x.outcomeScore == null && x.outcome_score == null ? null : Number(x.outcomeScore ?? x.outcome_score), confidence: Number(x.confidence ?? 0) };
+    }),
+    graphSuggestions: graph.map((item) => {
+      const x = item as Record<string, unknown>;
+      const rel = String(x.relationshipType ?? x.relationship_type);
+      return { decisionId: String(x.decisionId ?? x.decision_id), title: String(x.title ?? ''), relationshipType: (['depends_on','supersedes','related','blocks','unlocked'].includes(rel) ? rel : 'related') as DecisionRelationshipType, reason: String(x.reason ?? ''), confidence: Number(x.confidence ?? 0) };
+    }),
+    confidence: Math.max(0, Math.min(1, Number(row.confidence ?? 0))),
+    createdAt: String(row.createdAt ?? row.created_at ?? new Date().toISOString()),
   };
 }
 

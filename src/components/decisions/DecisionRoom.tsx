@@ -5,16 +5,16 @@ import { useAuth } from '@/auth/AuthProvider';
 import { supabase } from '@/lib/supabase';
 import {
   addDecisionComment, addDecisionResource, castDecisionVote, createAction, getDecision, getDecisionVoteTally,
-  getDecisionLinks, getDecisionOutcomeHistory, getLatestAIAnalysis, listActions, listDecisionComments, listDecisionHistory, listDecisionResources,
-  logProductEvent, requestAIAnalysis, setDecisionOutcome, type WorkspaceMember,
+  getDecisionLinks, getDecisionOutcomeHistory, getLatestDecisionIntelligence, listActions, listDecisionComments, listDecisionHistory, listDecisionResources,
+  logProductEvent, setDecisionOutcome, type WorkspaceMember,
 } from '@/lib/pulseApi';
 import type {
-  DecisionAIAnalysis, DecisionComment, DecisionHistoryEntry, DecisionOutcome,
+  DecisionComment, DecisionHistoryEntry, DecisionOutcome, DecisionIntelligence,
   DecisionResource, DecisionSummary, DecisionVoteTally, VoteChoice, WorkspaceAction, DecisionLink, DecisionOutcomeReview,
 } from '@/types';
 import { VotingPanel } from './VotingPanel';
 import { CommentThread } from './CommentThread';
-import { AIInsightPanel } from './AIInsightPanel';
+import { DecisionIntelligencePanel } from './DecisionIntelligencePanel';
 import { OutcomeControls } from './OutcomeControls';
 import { ConnectedDecisionsPanel } from './ConnectedDecisionsPanel';
 import { OutcomeHistoryPanel } from './OutcomeHistoryPanel';
@@ -42,7 +42,7 @@ export function DecisionRoom({ decisionId, members, isAdmin, aiEnabled = true, o
   const [comments, setComments] = useState<DecisionComment[]>([]);
   const [tally, setTally] = useState<DecisionVoteTally>({ yes: 0, no: 0, needsInfo: 0, total: 0, myVote: null });
   const [history, setHistory] = useState<DecisionHistoryEntry[]>([]);
-  const [analysis, setAnalysis] = useState<DecisionAIAnalysis | null>(null);
+  const [intelligence, setIntelligence] = useState<DecisionIntelligence | null>(null);
   const [decisionActions, setDecisionActions] = useState<WorkspaceAction[]>([]);
   const [addingAction, setAddingAction] = useState(false);
   const [actionTitle, setActionTitle] = useState('');
@@ -65,11 +65,11 @@ export function DecisionRoom({ decisionId, members, isAdmin, aiEnabled = true, o
         listDecisionHistory(decisionId),
         getDecisionLinks(decisionId),
         getDecisionOutcomeHistory(decisionId),
-        getLatestAIAnalysis(decisionId),
+        getLatestDecisionIntelligence(decisionId),
         d ? listActions(d.workspaceId) : Promise.resolve([] as WorkspaceAction[]),
       ]);
-      setDecision(d); setResources(res); setComments(cmts); setTally(t); setHistory(hist); setAnalysis(ai); setLinks(linksData); setOutcomeReviews(outcomeData);
-      setDecisionActions(allActions.filter((a) => a.decisionId === decisionId));
+      setDecision(d); setResources(res); setComments(cmts); setTally(t); setHistory(hist); setIntelligence(ai); setLinks(linksData); setOutcomeReviews(outcomeData);
+      setDecisionActions(allActions.filter((a: WorkspaceAction) => a.decisionId === decisionId));
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not load this decision');
     }
@@ -210,11 +210,13 @@ export function DecisionRoom({ decisionId, members, isAdmin, aiEnabled = true, o
 
             <VotingPanel tally={tally} onVote={async (choice: VoteChoice, anon) => { await castDecisionVote(decision.id, choice, anon); await logProductEvent('vote_cast', decision.workspaceId); load(); }} />
 
-            <AIInsightPanel
-              analysis={analysis}
-              configured={Boolean(supabase)}
-              aiEnabled={aiEnabled}
-              onAnalyze={async () => { const a = await requestAIAnalysis(decision.id); setAnalysis(a); }}
+            <DecisionIntelligencePanel
+              decisionId={decision.id}
+              workspaceId={decision.workspaceId}
+              initial={intelligence}
+              enabled={Boolean(supabase) && aiEnabled}
+              onUpdated={setIntelligence}
+              onLinksChange={() => getDecisionLinks(decision.id).then(setLinks)}
             />
 
             <OutcomeControls

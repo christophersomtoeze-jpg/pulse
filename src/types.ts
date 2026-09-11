@@ -116,6 +116,40 @@ export interface DecisionHistoryEntry {
   createdAt: string;
 }
 
+export type DecisionRiskLevel = 'low' | 'medium' | 'high';
+export interface DecisionSimilarDecision {
+  decisionId: string;
+  title: string;
+  reason: string;
+  outcome: DecisionOutcome | null;
+  outcomeScore: number | null;
+  confidence: number;
+}
+export interface DecisionGraphSuggestion {
+  decisionId: string;
+  title: string;
+  relationshipType: DecisionRelationshipType;
+  reason: string;
+  confidence: number;
+}
+export interface DecisionIntelligence {
+  id: string;
+  decisionId: string;
+  executiveSummary: string;
+  qualityScore: number;
+  riskLevel: DecisionRiskLevel;
+  riskReasons: string[];
+  evidenceGaps: string[];
+  strongestArguments: string[];
+  disagreements: string[];
+  recommendation: string;
+  nextActions: string[];
+  similarDecisions: DecisionSimilarDecision[];
+  graphSuggestions: DecisionGraphSuggestion[];
+  confidence: number;
+  createdAt: string;
+}
+
 export interface DecisionAIAnalysis {
   id: string;
   summary: string;
