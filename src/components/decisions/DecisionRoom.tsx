@@ -5,17 +5,19 @@ import { useAuth } from '@/auth/AuthProvider';
 import { supabase } from '@/lib/supabase';
 import {
   addDecisionComment, addDecisionResource, castDecisionVote, createAction, getDecision, getDecisionVoteTally,
-  getLatestAIAnalysis, listActions, listDecisionComments, listDecisionHistory, listDecisionResources,
+  getDecisionLinks, getDecisionOutcomeHistory, getLatestAIAnalysis, listActions, listDecisionComments, listDecisionHistory, listDecisionResources,
   logProductEvent, requestAIAnalysis, setDecisionOutcome, type WorkspaceMember,
 } from '@/lib/pulseApi';
 import type {
   DecisionAIAnalysis, DecisionComment, DecisionHistoryEntry, DecisionOutcome,
-  DecisionResource, DecisionSummary, DecisionVoteTally, VoteChoice, WorkspaceAction,
+  DecisionResource, DecisionSummary, DecisionVoteTally, VoteChoice, WorkspaceAction, DecisionLink, DecisionOutcomeReview,
 } from '@/types';
 import { VotingPanel } from './VotingPanel';
 import { CommentThread } from './CommentThread';
 import { AIInsightPanel } from './AIInsightPanel';
 import { OutcomeControls } from './OutcomeControls';
+import { ConnectedDecisionsPanel } from './ConnectedDecisionsPanel';
+import { OutcomeHistoryPanel } from './OutcomeHistoryPanel';
 
 const statusPill: Record<string, string> = {
   approved: 'text-flux-300 bg-flux-500/15 border-flux-500/30',
@@ -47,20 +49,24 @@ export function DecisionRoom({ decisionId, members, isAdmin, aiEnabled = true, o
   const [resourceName, setResourceName] = useState('');
   const [resourceUrl, setResourceUrl] = useState('');
   const [error, setError] = useState('');
+  const [links, setLinks] = useState<DecisionLink[]>([]);
+  const [outcomeReviews, setOutcomeReviews] = useState<DecisionOutcomeReview[]>([]);
 
   const load = useCallback(async () => {
     if (!user) return;
     try {
       const d = await getDecision(decisionId);
-      const [res, cmts, t, hist, ai, allActions] = await Promise.all([
+      const [res, cmts, t, hist, linksData, outcomeData, ai, allActions] = await Promise.all([
         listDecisionResources(decisionId),
         listDecisionComments(decisionId),
         getDecisionVoteTally(decisionId, user.id),
         listDecisionHistory(decisionId),
+        getDecisionLinks(decisionId),
+        getDecisionOutcomeHistory(decisionId),
         getLatestAIAnalysis(decisionId),
         d ? listActions(d.workspaceId) : Promise.resolve([] as WorkspaceAction[]),
       ]);
-      setDecision(d); setResources(res); setComments(cmts); setTally(t); setHistory(hist); setAnalysis(ai);
+      setDecision(d); setResources(res); setComments(cmts); setTally(t); setHistory(hist); setAnalysis(ai); setLinks(linksData); setOutcomeReviews(outcomeData);
       setDecisionActions(allActions.filter((a) => a.decisionId === decisionId));
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not load this decision');
@@ -182,6 +188,23 @@ export function DecisionRoom({ decisionId, members, isAdmin, aiEnabled = true, o
                 {decisionActions.length === 0 && <p className="text-xs text-ink-500">No actions created from this decision yet.</p>}
               </div>
             </div>
+
+            <ConnectedDecisionsPanel
+              decisionId={decision.id}
+              workspaceId={decision.workspaceId}
+              links={links}
+              onLinksChange={() => getDecisionLinks(decision.id).then(setLinks)}
+              isAdmin={isAdmin}
+            />
+
+            {decision.status === 'decided' && (
+              <OutcomeHistoryPanel
+                decisionId={decision.id}
+                reviews={outcomeReviews}
+                canReview={isAdmin || decision.ownerId === user?.id}
+                onReviewSubmitted={() => getDecisionOutcomeHistory(decision.id).then(setOutcomeReviews)}
+              />
+            )}
 
             <VotingPanel tally={tally} onVote={async (choice: VoteChoice, anon) => { await castDecisionVote(decision.id, choice, anon); await logProductEvent('vote_cast', decision.workspaceId); load(); }} />
 

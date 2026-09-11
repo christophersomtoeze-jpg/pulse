@@ -29,6 +29,7 @@ import { HelpView } from '@/components/views/HelpView';
 import { ComingSoonView } from '@/components/views/ComingSoonView';
 import { DecisionsListView } from '@/components/decisions/DecisionsListView';
 import { NewDecisionModal } from '@/components/decisions/NewDecisionModal';
+import { PreDecisionGate } from '@/components/decisions/PreDecisionGate';
 import { DecisionRoom } from '@/components/decisions/DecisionRoom';
 import { KeyboardShortcutsModal } from '@/components/KeyboardShortcutsModal';
 import { I18nProvider } from '@/lib/i18n/I18nProvider';
@@ -59,9 +60,9 @@ const demoResources = [
 /** Fills the Ledger/Decisions/Dashboard views with something to look at before Supabase is configured. */
 function demoDecisionSummaries(): DecisionSummary[] {
   return [
-    { id: 'demo-1', workspaceId: 'demo', title: 'Brand Identity', description: 'Locking the wordmark-only direction.', status: 'decided', outcome: 'approved', deadline: null, ownerId: null, ownerName: 'Sarah Chen', createdBy: 'demo', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), decidedAt: new Date().toISOString() },
-    { id: 'demo-2', workspaceId: 'demo', title: 'Launch Strategy', description: 'Q3 soft launch timeline and channels.', status: 'in-review', outcome: null, deadline: null, ownerId: null, ownerName: 'Marcus Lee', createdBy: 'demo', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), decidedAt: null },
-    { id: 'demo-3', workspaceId: 'demo', title: 'AI Integration', description: 'Recommendation engine rollout.', status: 'in-review', outcome: null, deadline: null, ownerId: null, ownerName: 'Aisha Patel', createdBy: 'demo', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), decidedAt: null },
+    { id: 'demo-1', workspaceId: 'demo', title: 'Brand Identity', description: 'Locking the wordmark-only direction.', status: 'decided', outcome: 'approved', deadline: null, ownerId: null, ownerName: 'Sarah Chen', createdBy: 'demo', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), decidedAt: new Date().toISOString(), outcomeScore: null, lastOutcomeReviewAt: null, isReversed: false, reversedAt: null, reversalReason: null, gateAnswers: null },
+    { id: 'demo-2', workspaceId: 'demo', title: 'Launch Strategy', description: 'Q3 soft launch timeline and channels.', status: 'in-review', outcome: null, deadline: null, ownerId: null, ownerName: 'Marcus Lee', createdBy: 'demo', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), decidedAt: null, outcomeScore: null, lastOutcomeReviewAt: null, isReversed: false, reversedAt: null, reversalReason: null, gateAnswers: null },
+    { id: 'demo-3', workspaceId: 'demo', title: 'AI Integration', description: 'Recommendation engine rollout.', status: 'in-review', outcome: null, deadline: null, ownerId: null, ownerName: 'Aisha Patel', createdBy: 'demo', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), decidedAt: null, outcomeScore: null, lastOutcomeReviewAt: null, isReversed: false, reversedAt: null, reversalReason: null, gateAnswers: null },
   ];
 }
 
@@ -150,8 +151,15 @@ function AppShell() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [globalSearchOpen, setGlobalSearchOpen] = useState(false);
   const [showNewDecision, setShowNewDecision] = useState(false);
+  const [showDecisionGate, setShowDecisionGate] = useState(false);
+  const [decisionPrefill, setDecisionPrefill] = useState({ title: '', description: '', gateAnswers: null as import('@/types').DecisionGateAnswers | null });
   const [showNewWorkspace, setShowNewWorkspace] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
+  const openNewDecision = () => {
+    if (!workspace) { setShowNewDecision(true); return; }
+    setShowDecisionGate(true);
+  };
+
   const [activeDecisionId, setActiveDecisionId] = useState<string | null>(null);
   const [selectedTopic, setSelectedTopic] = useState<TopicNode | null>(null);
   const [message, setMessage] = useState('');
@@ -238,6 +246,7 @@ function AppShell() {
         if (showShortcuts) setShowShortcuts(false);
         else if (globalSearchOpen) setGlobalSearchOpen(false);
         else if (activeDecisionId) setActiveDecisionId(null);
+        else if (showDecisionGate) setShowDecisionGate(false);
         else if (showNewDecision) setShowNewDecision(false);
         else if (showNewWorkspace) setShowNewWorkspace(false);
         else if (selectedTopic) setSelectedTopic(null);
@@ -245,7 +254,7 @@ function AppShell() {
         return;
       }
       if (typing) return;
-      if (e.key === 'n' || e.key === 'N') setShowNewDecision(true);
+      if (e.key === 'n' || e.key === 'N') openNewDecision();
       if (e.key === '?') setShowShortcuts((v) => !v);
       if (e.key === '/') { e.preventDefault(); setGlobalSearchOpen(true); }
     };
@@ -322,7 +331,7 @@ function AppShell() {
             decisions={decisions}
             memberCount={members.length}
             pendingInviteCount={pendingInviteCount}
-            onNewDecision={() => setShowNewDecision(true)}
+            onNewDecision={() => openNewDecision()}
             onInvite={() => setView('invitations')}
           />
         )}
@@ -336,7 +345,7 @@ function AppShell() {
             actions={actions}
             risks={riskCount}
             dashboard={dashboard}
-            onNewDecision={() => setShowNewDecision(true)}
+            onNewDecision={() => openNewDecision()}
             onOpenDecision={openDecision}
             onNavigate={setView}
           />
@@ -366,8 +375,8 @@ function AppShell() {
           />
         )}
         {view === 'platform-metrics' && platformAdmin && <PlatformMetricsView />}
-        {view === 'decisions' && workspace && <DecisionsListView workspaceId={workspace.id} decisions={decisions} onOpen={openDecision} onNew={() => setShowNewDecision(true)} />}
-        {view === 'decisions' && !workspace && <DecisionsListView workspaceId="demo" decisions={decisions} onOpen={openDecision} onNew={() => setShowNewDecision(true)} />}
+        {view === 'decisions' && workspace && <DecisionsListView workspaceId={workspace.id} decisions={decisions} onOpen={openDecision} onNew={() => openNewDecision()} />}
+        {view === 'decisions' && !workspace && <DecisionsListView workspaceId="demo" decisions={decisions} onOpen={openDecision} onNew={() => openNewDecision()} />}
         {view === 'polls' && workspace && <PollsView workspaceId={workspace.id} polls={polls} onRefresh={() => refreshWorkspaceData(workspace.id)} />}
         {view === 'polls' && !workspace && <ComingSoonView icon={Sparkles} phase="Connect Supabase" title="Polls need a workspace" description="Sign in and create a workspace to create and vote on real polls." />}
         {view === 'resources' && workspace && <ResourcesView workspaceId={workspace.id} />}
@@ -435,11 +444,27 @@ function AppShell() {
         )}
       </AnimatePresence>
 
+      {workspace && (
+        <PreDecisionGate
+          open={showDecisionGate}
+          workspaceId={workspace.id}
+          onClose={() => setShowDecisionGate(false)}
+          onProceed={({ title, description, gateAnswers }) => {
+            setDecisionPrefill({ title, description, gateAnswers });
+            setShowDecisionGate(false);
+            setShowNewDecision(true);
+          }}
+        />
+      )}
+
       <NewDecisionModal
         open={showNewDecision}
+        initialTitle={decisionPrefill.title}
+        initialDescription={decisionPrefill.description}
+        initialGateAnswers={decisionPrefill.gateAnswers}
         members={members}
         currentUserId={user?.id ?? ''}
-        onClose={() => setShowNewDecision(false)}
+        onClose={() => { setShowNewDecision(false); setDecisionPrefill({ title: '', description: '', gateAnswers: null }); }}
         onCreate={async (input) => {
           if (!workspace || !user) { setNotice('Connect Supabase and sign in to create real decisions — this is demo data.'); return; }
           await createDecision({ workspaceId: workspace.id, ...input }, user.id);

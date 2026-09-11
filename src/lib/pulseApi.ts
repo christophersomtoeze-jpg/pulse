@@ -7,6 +7,8 @@ import type {
   AnalyticsSnapshot, WorkspaceSubscription, WorkspaceIntegration, IntegrationProvider, PlatformMetrics,
   ProfileDetails, NotificationPreferences, LoginHistoryEntry, WorkspaceGeneralSettings, WorkspaceUsage,
   ApiKeySummary, IncomingWebhookSummary, SsoDomainSummary,
+  DecisionLink, DecisionRelationshipType, DecisionOutcomeReview, OutcomeReviewType, DecisionGateAnswers,
+  RecommendedDecisionProcess, DecisionReversibility, DecisionUrgency,
 } from '@/types';
 import { supabase } from '@/lib/supabase';
 
@@ -316,6 +318,8 @@ type DecisionRow = {
   id: string; workspace_id: string; title: string; description: string | null;
   status: PinnedDecision['status']; outcome: DecisionOutcome | null; deadline: string | null;
   owner_id: string | null; created_by: string; created_at: string; updated_at: string; decided_at: string | null;
+  outcome_score: number | null; last_outcome_review_at: string | null; is_reversed: boolean | null;
+  reversed_at: string | null; reversal_reason: string | null; decision_gate: DecisionGateAnswers | null;
   owner: { full_name: string } | { full_name: string }[] | null;
 };
 
@@ -335,10 +339,16 @@ function mapDecisionRow(row: DecisionRow): DecisionSummary {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     decidedAt: row.decided_at,
+    outcomeScore: row.outcome_score ?? null,
+    lastOutcomeReviewAt: row.last_outcome_review_at ?? null,
+    isReversed: Boolean(row.is_reversed),
+    reversedAt: row.reversed_at ?? null,
+    reversalReason: row.reversal_reason ?? null,
+    gateAnswers: row.decision_gate ?? null,
   };
 }
 
-const DECISION_SELECT = 'id,workspace_id,title,description,status,outcome,deadline,owner_id,created_by,created_at,updated_at,decided_at,owner:owner_id(full_name)';
+const DECISION_SELECT = 'id,workspace_id,title,description,status,outcome,deadline,owner_id,created_by,created_at,updated_at,decided_at,outcome_score,last_outcome_review_at,is_reversed,reversed_at,reversal_reason,decision_gate,owner:owner_id(full_name)';
 
 export async function listDecisions(workspaceId: string): Promise<DecisionSummary[]> {
   if (!supabase) return [];
@@ -362,6 +372,7 @@ export interface CreateDecisionInput {
   deadline?: string | null;
   ownerId?: string | null;
   resourceLinks?: { name: string; url: string }[];
+  gateAnswers?: DecisionGateAnswers | null;
 }
 
 export async function createDecision(input: CreateDecisionInput, createdBy: string): Promise<DecisionSummary> {
@@ -377,6 +388,7 @@ export async function createDecision(input: CreateDecisionInput, createdBy: stri
       owner_id: input.ownerId ?? createdBy,
       created_by: createdBy,
       status: 'in-review',
+      decision_gate: input.gateAnswers ?? {},
     })
     .select(DECISION_SELECT)
     .single();
@@ -484,6 +496,238 @@ export async function getDecisionVoteTally(decisionId: string, currentUserId: st
     if (row.user_id === currentUserId) tally.myVote = row.choice as VoteChoice;
   }
   return tally;
+}
+
+
+// ---- Decision Graph ----
+
+export async function getDecisionLinks(decisionId: string): Promise<DecisionLink[]> {
+  if (!supabase) return [];
+  const { data, error } = await supabase
+    .from('decision_links')
+    .select(`
+      id,workspace_id,from_decision_id,to_decision_id,relationship_type,note,created_by,created_at,
+      from_decision:from_decision_id(title),
+      to_decision:to_decision_id(title)
+    `)
+    .or(`from_decision_id.eq.${decisionId},to_decision_id.eq.${decisionId}`)
+    .order('created_at', { ascending: false });
+  if (error) throw new Error(error.message);
+  type Row = {
+    id: string; workspace_id: string; from_decision_id: string; to_decision_id: string;
+    relationship_type: DecisionRelationshipType; note: string | null; created_by: string | null; created_at: string;
+    from_decision: { title: string } | { title: string }[] | null;
+    to_decision: { title: string } | { title: string }[] | null;
+  };
+  return (data ?? []).map((raw) => {
+    const row = raw as unknown as Row;
+    const from = Array.isArray(row.from_decision) ? row.from_decision[0] : row.from_decision;
+    const to = Array.isArray(row.to_decision) ? row.to_decision[0] : row.to_decision;
+    return {
+      id: row.id, workspaceId: row.workspace_id, fromDecisionId: row.from_decision_id,
+      toDecisionId: row.to_decision_id, relationshipType: row.relationship_type,
+      note: row.note, createdBy: row.created_by, createdAt: row.created_at,
+      fromDecisionTitle: from?.title, toDecisionTitle: to?.title,
+    };
+  });
+}
+
+export async function createDecisionLink(params: {
+  workspaceId: string; fromDecisionId: string; toDecisionId: string;
+  relationshipType: DecisionRelationshipType; note?: string | null;
+}): Promise<DecisionLink> {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const { data: authData } = await supabase.auth.getUser();
+  if (!authData.user) throw new Error('Not authenticated.');
+  const { data, error } = await supabase
+    .from('decision_links')
+    .insert({
+      workspace_id: params.workspaceId,
+      from_decision_id: params.fromDecisionId,
+      to_decision_id: params.toDecisionId,
+      relationship_type: params.relationshipType,
+      note: params.note?.trim() || null,
+      created_by: authData.user.id,
+    })
+    .select(`
+      id,workspace_id,from_decision_id,to_decision_id,relationship_type,note,created_by,created_at,
+      from_decision:from_decision_id(title),to_decision:to_decision_id(title)
+    `)
+    .single();
+  if (error) throw new Error(error.message);
+  const row = data as unknown as { id: string; workspace_id: string; from_decision_id: string; to_decision_id: string; relationship_type: DecisionRelationshipType; note: string | null; created_by: string | null; created_at: string; from_decision: { title: string } | { title: string }[] | null; to_decision: { title: string } | { title: string }[] | null };
+  const from = Array.isArray(row.from_decision) ? row.from_decision[0] : row.from_decision;
+  const to = Array.isArray(row.to_decision) ? row.to_decision[0] : row.to_decision;
+  return {
+    id: row.id, workspaceId: row.workspace_id, fromDecisionId: row.from_decision_id,
+    toDecisionId: row.to_decision_id, relationshipType: row.relationship_type,
+    note: row.note, createdBy: row.created_by, createdAt: row.created_at,
+    fromDecisionTitle: from?.title, toDecisionTitle: to?.title,
+  };
+}
+
+export async function deleteDecisionLink(linkId: string) {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const { error } = await supabase.from('decision_links').delete().eq('id', linkId);
+  if (error) throw new Error(error.message);
+}
+
+export async function searchDecisions(workspaceId: string, query: string): Promise<DecisionSummary[]> {
+  if (!supabase) return [];
+  const q = query.trim();
+  if (!q) return listDecisions(workspaceId);
+  const like = `%${q}%`;
+  const { data, error } = await supabase
+    .from('decisions')
+    .select(DECISION_SELECT)
+    .eq('workspace_id', workspaceId)
+    .or(`title.ilike.${like},description.ilike.${like},summary.ilike.${like}`)
+    .order('updated_at', { ascending: false })
+    .limit(20);
+  if (error) throw new Error(error.message);
+  return (data ?? []).map((row) => mapDecisionRow(row as unknown as DecisionRow));
+}
+
+export async function suggestDecisionLinks(decisionId: string): Promise<{ decisionId: string; title: string; reason: string; confidence: number }[]> {
+  if (!supabase) return [];
+  const current = await getDecision(decisionId);
+  if (!current) return [];
+  const candidates = await searchDecisions(current.workspaceId, current.title);
+  const existing = new Set((await getDecisionLinks(decisionId)).flatMap((l) => [l.fromDecisionId, l.toDecisionId]));
+  const words = new Set(current.title.toLowerCase().split(/\W+/).filter((w) => w.length > 3));
+  return candidates
+    .filter((d) => d.id !== decisionId && !existing.has(d.id))
+    .map((d) => {
+      const haystack = `${d.title} ${d.description}`.toLowerCase();
+      const overlap = [...words].filter((word) => haystack.includes(word)).length;
+      const confidence = Math.min(0.95, 0.35 + overlap * 0.12);
+      return {
+        decisionId: d.id,
+        title: d.title,
+        reason: overlap ? `Shares ${overlap} meaningful term${overlap === 1 ? '' : 's'} with this decision.` : 'Recent decision in the same workspace that may provide useful context.',
+        confidence,
+      };
+    })
+    .filter((s) => s.confidence >= 0.35)
+    .sort((a, b) => b.confidence - a.confidence)
+    .slice(0, 5);
+}
+
+export async function analyzeDecisionProposal(
+  workspaceId: string,
+  title: string,
+  description: string
+): Promise<{
+  recommendation: string;
+  reversibility: DecisionReversibility;
+  urgency: DecisionUrgency;
+  recommendedProcess: RecommendedDecisionProcess;
+}> {
+  if (!supabase) {
+    return { recommendation: 'Review the proposal with the relevant owner and evidence before committing.', reversibility: 'reversible', urgency: 'medium', recommendedProcess: 'full' };
+  }
+  const { data, error } = await supabase.functions.invoke('pulse-assistant', {
+    body: {
+      workspaceId,
+      content: `Analyze this proposed team decision. Return ONLY JSON with keys recommendation, reversibility, urgency, recommendedProcess. Allowed reversibility: reversible, hard_to_reverse, irreversible. Allowed urgency: low, medium, high. Allowed recommendedProcess: full, poll, action.
+Title: ${title}
+Description: ${description || '(none)'}`,
+    },
+  });
+  if (!error && data?.content) {
+    try {
+      const parsed = JSON.parse(String(data.content).replace(/```json|```/g, '').trim());
+      return {
+        recommendation: String(parsed.recommendation || 'Review the proposal with the relevant owner and evidence before committing.'),
+        reversibility: ['reversible', 'hard_to_reverse', 'irreversible'].includes(parsed.reversibility) ? parsed.reversibility : 'reversible',
+        urgency: ['low', 'medium', 'high'].includes(parsed.urgency) ? parsed.urgency : 'medium',
+        recommendedProcess: ['full', 'poll', 'action'].includes(parsed.recommendedProcess) ? parsed.recommendedProcess : 'full',
+      };
+    } catch { /* fall through to safe local heuristic */ }
+  }
+  const lower = `${title} ${description}`.toLowerCase();
+  const irreversible = /(hire|fire|terminate|acquisition|merge|legal|contract|security|delete|migrate)/.test(lower);
+  const urgent = /(today|urgent|outage|incident|deadline|blocking)/.test(lower);
+  return {
+    recommendation: 'Capture the decision with its evidence, owner, and review date so the result remains accountable.',
+    reversibility: irreversible ? 'hard_to_reverse' : 'reversible',
+    urgency: urgent ? 'high' : 'medium',
+    recommendedProcess: /(execute|implement|fix|assign|ship|update)/.test(lower) ? 'action' : 'full',
+  };
+}
+
+
+export async function getDecisionOutcomeHistory(decisionId: string): Promise<DecisionOutcomeReview[]> {
+  if (!supabase) return [];
+  const { data, error } = await supabase
+    .from('decision_outcome_reviews')
+    .select('id,decision_id,workspace_id,scheduled_for,review_type,status,was_successful,score,what_happened,lessons,should_reverse,reverse_reason,reviewed_by,reviewed_at,created_at,updated_at')
+    .eq('decision_id', decisionId)
+    .order('scheduled_for', { ascending: true });
+  if (error) throw new Error(error.message);
+  return (data ?? []).map((row) => mapOutcomeReview(row as unknown as Record<string, unknown>));
+}
+
+export async function listPendingOutcomeReviews(workspaceId: string, userId?: string): Promise<DecisionOutcomeReview[]> {
+  if (!supabase) return [];
+  const { data, error } = await supabase
+    .from('decision_outcome_reviews')
+    .select('id,decision_id,workspace_id,scheduled_for,review_type,status,was_successful,score,what_happened,lessons,should_reverse,reverse_reason,reviewed_by,reviewed_at,created_at,updated_at')
+    .eq('workspace_id', workspaceId)
+    .in('status', ['pending', 'overdue'])
+    .order('scheduled_for', { ascending: true });
+  if (error) throw new Error(error.message);
+  const reviews = (data ?? []).map((row) => mapOutcomeReview(row as unknown as Record<string, unknown>));
+  if (!userId) return reviews;
+  const decisions = await listDecisions(workspaceId);
+  const owned = new Set(decisions.filter((d) => d.ownerId === userId || d.createdBy === userId).map((d) => d.id));
+  return reviews.filter((r) => owned.has(r.decisionId));
+}
+
+export async function submitOutcomeReview(reviewId: string, input: {
+  wasSuccessful: boolean;
+  score: number;
+  whatHappened: string;
+  lessons: string;
+  shouldReverse: boolean;
+  reverseReason?: string;
+}): Promise<DecisionOutcomeReview> {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const { data: authData } = await supabase.auth.getUser();
+  if (!authData.user) throw new Error('Not authenticated.');
+  const score = Math.max(1, Math.min(5, Math.round(input.score)));
+  const { data, error } = await supabase.rpc('submit_decision_outcome_review', {
+    p_review_id: reviewId,
+    p_was_successful: input.wasSuccessful,
+    p_score: score,
+    p_what_happened: input.whatHappened.trim() || null,
+    p_lessons: input.lessons.trim() || null,
+    p_should_reverse: input.shouldReverse,
+    p_reverse_reason: input.reverseReason?.trim() || null,
+  });
+  if (error) throw new Error(error.message);
+  return mapOutcomeReview(data as unknown as Record<string, unknown>);
+}
+
+function mapOutcomeReview(row: Record<string, unknown>): DecisionOutcomeReview {
+  return {
+    id: String(row.id),
+    decisionId: String(row.decision_id),
+    workspaceId: String(row.workspace_id),
+    scheduledFor: String(row.scheduled_for),
+    reviewType: row.review_type as OutcomeReviewType,
+    status: row.status as DecisionOutcomeReview['status'],
+    wasSuccessful: row.was_successful == null ? null : Boolean(row.was_successful),
+    score: row.score == null ? null : Number(row.score),
+    whatHappened: row.what_happened == null ? null : String(row.what_happened),
+    lessons: row.lessons == null ? null : String(row.lessons),
+    shouldReverse: Boolean(row.should_reverse),
+    reverseReason: row.reverse_reason == null ? null : String(row.reverse_reason),
+    reviewedBy: row.reviewed_by == null ? null : String(row.reviewed_by),
+    reviewedAt: row.reviewed_at == null ? null : String(row.reviewed_at),
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at),
+  };
 }
 
 // ---- Outcome + permanent history ----
@@ -1355,7 +1599,8 @@ export async function listAutomationRuns(workspaceId: string): Promise<Automatio
   if (!supabase) return [];
   const { data, error } = await supabase.from('automation_runs').select('id,rule_id,action_count,created_at,automation_rules(name)').eq('workspace_id', workspaceId).order('created_at', { ascending: false }).limit(30);
   if (error) throw new Error(error.message);
-  return (data ?? []).map((r: any) => ({ id: r.id, ruleName: r.automation_rules?.name ?? 'Automation', actionCount: Number(r.action_count ?? 0), createdAt: r.created_at }));
+  type AutomationRunRow = { id: string; rule_id: string; action_count: number | null; created_at: string; automation_rules: { name: string } | { name: string }[] | null };
+  return (data ?? []).map((raw) => { const r = raw as unknown as AutomationRunRow; const rule = Array.isArray(r.automation_rules) ? r.automation_rules[0] : r.automation_rules; return { id: r.id, ruleName: rule?.name ?? 'Automation', actionCount: Number(r.action_count ?? 0), createdAt: r.created_at }; });
 }
 
 // Workspace general settings + usage

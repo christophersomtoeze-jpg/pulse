@@ -1,25 +1,30 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Link2, Plus, Trash2, X } from 'lucide-react';
 import type { WorkspaceMember } from '@/lib/pulseApi';
+import type { DecisionGateAnswers } from '@/types';
 
 interface NewDecisionModalProps {
   open: boolean;
   members: WorkspaceMember[];
   currentUserId: string;
   onClose: () => void;
+  initialTitle?: string;
+  initialDescription?: string;
+  initialGateAnswers?: DecisionGateAnswers | null;
   onCreate: (input: {
     title: string;
     description: string;
     deadline: string | null;
     ownerId: string;
     resourceLinks: { name: string; url: string }[];
+    gateAnswers: DecisionGateAnswers | null;
   }) => Promise<void>;
 }
 
-export function NewDecisionModal({ open, members, currentUserId, onClose, onCreate }: NewDecisionModalProps) {
-  const [title, setTitle] = useState('');
-  const [description, setDescription] = useState('');
+export function NewDecisionModal({ open, members, currentUserId, onClose, onCreate, initialTitle = '', initialDescription = '', initialGateAnswers = null }: NewDecisionModalProps) {
+  const [title, setTitle] = useState(initialTitle);
+  const [description, setDescription] = useState(initialDescription);
   const [deadline, setDeadline] = useState('');
   const [ownerId, setOwnerId] = useState(currentUserId);
   const [resources, setResources] = useState<{ name: string; url: string }[]>([]);
@@ -27,6 +32,14 @@ export function NewDecisionModal({ open, members, currentUserId, onClose, onCrea
   const [resourceUrl, setResourceUrl] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (!open) return;
+    setTitle(initialTitle);
+    setDescription(initialDescription);
+    setOwnerId(currentUserId);
+    setError('');
+  }, [open, initialTitle, initialDescription, currentUserId]);
 
   const addResource = () => {
     if (!resourceName.trim() || !resourceUrl.trim()) return;
@@ -50,6 +63,7 @@ export function NewDecisionModal({ open, members, currentUserId, onClose, onCrea
         deadline: deadline ? new Date(deadline).toISOString() : null,
         ownerId,
         resourceLinks: resources,
+        gateAnswers: initialGateAnswers,
       });
       reset();
       onClose();

@@ -80,6 +80,12 @@ export interface DecisionSummary {
   createdAt: string;
   updatedAt: string;
   decidedAt: string | null;
+  outcomeScore: number | null;
+  lastOutcomeReviewAt: string | null;
+  isReversed: boolean;
+  reversedAt: string | null;
+  reversalReason: string | null;
+  gateAnswers: DecisionGateAnswers | null;
 }
 
 export interface DecisionVoteTally {
@@ -118,6 +124,60 @@ export interface DecisionAIAnalysis {
   recommendation: string | null;
   confidence: number | null;
   createdAt: string;
+}
+
+
+
+export type DecisionRelationshipType = 'depends_on' | 'supersedes' | 'related' | 'blocks' | 'unlocked';
+
+export interface DecisionLink {
+  id: string;
+  workspaceId: string;
+  fromDecisionId: string;
+  toDecisionId: string;
+  relationshipType: DecisionRelationshipType;
+  note: string | null;
+  createdBy: string | null;
+  createdAt: string;
+  fromDecisionTitle?: string;
+  toDecisionTitle?: string;
+}
+
+export type OutcomeReviewType = '30d' | '90d' | '180d';
+export type OutcomeReviewStatus = 'pending' | 'completed' | 'skipped' | 'overdue';
+
+export interface DecisionOutcomeReview {
+  id: string;
+  decisionId: string;
+  workspaceId: string;
+  scheduledFor: string;
+  reviewType: OutcomeReviewType;
+  status: OutcomeReviewStatus;
+  wasSuccessful: boolean | null;
+  score: number | null;
+  whatHappened: string | null;
+  lessons: string | null;
+  shouldReverse: boolean;
+  reverseReason: string | null;
+  reviewedBy: string | null;
+  reviewedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type DecisionReversibility = 'reversible' | 'hard_to_reverse' | 'irreversible';
+export type DecisionUrgency = 'low' | 'medium' | 'high';
+export type RecommendedDecisionProcess = 'full' | 'poll' | 'action';
+
+export interface DecisionGateAnswers {
+  alreadyDecided: boolean | null;
+  reversibility: DecisionReversibility;
+  urgency: DecisionUrgency;
+  estimatedCostOfDelay: string;
+  suggestedOwners: string[];
+  similarDecisionIds: string[];
+  aiRecommendation: string | null;
+  recommendedProcess: RecommendedDecisionProcess;
 }
 
 // ---- Phase 3: Actions ----

@@ -1291,3 +1291,228 @@ revoke all on function public.cleanup_expired_oauth_states() from public;
 grant execute on function public.cleanup_expired_oauth_states() to service_role;
 
 notify pgrst, 'reload schema';
+
+
+-- ============================================================================
+-- PULSE Phase 1: Decision Graph + Outcome Tracking + Pre-Decision Gate
+-- Safe to run repeatedly.
+-- ============================================================================
+
+alter table public.decisions
+  add column if not exists outcome_score numeric check (outcome_score >= 1 and outcome_score <= 5),
+  add column if not exists last_outcome_review_at timestamptz,
+  add column if not exists is_reversed boolean not null default false,
+  add column if not exists reversed_at timestamptz,
+  add column if not exists reversed_by uuid references public.profiles(id) on delete set null,
+  add column if not exists reversal_reason text,
+  add column if not exists decision_gate jsonb not null default '{}'::jsonb;
+
+-- Permanent edges between decision nodes.
+create table if not exists public.decision_links (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references public.workspaces(id) on delete cascade,
+  from_decision_id uuid not null references public.decisions(id) on delete cascade,
+  to_decision_id uuid not null references public.decisions(id) on delete cascade,
+  relationship_type text not null check (relationship_type in ('depends_on','supersedes','related','blocks','unlocked')),
+  note text,
+  created_by uuid references public.profiles(id) on delete set null,
+  created_at timestamptz not null default now(),
+  constraint decision_links_not_self check (from_decision_id <> to_decision_id),
+  unique(from_decision_id, to_decision_id, relationship_type)
+);
+create index if not exists decision_links_workspace_idx on public.decision_links(workspace_id);
+create index if not exists decision_links_from_idx on public.decision_links(from_decision_id);
+create index if not exists decision_links_to_idx on public.decision_links(to_decision_id);
+
+create or replace function public.validate_decision_link_workspace()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare from_ws uuid; to_ws uuid;
+begin
+  select workspace_id into from_ws from public.decisions where id = new.from_decision_id;
+  select workspace_id into to_ws from public.decisions where id = new.to_decision_id;
+  if from_ws is null or to_ws is null or from_ws <> to_ws or new.workspace_id <> from_ws then
+    raise exception 'Linked decisions must belong to the same workspace';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists validate_decision_link_workspace on public.decision_links;
+create trigger validate_decision_link_workspace
+before insert or update on public.decision_links
+for each row execute function public.validate_decision_link_workspace();
+
+alter table public.decision_links enable row level security;
+drop policy if exists decision_links_select_member on public.decision_links;
+create policy decision_links_select_member on public.decision_links for select to authenticated
+using (public.is_workspace_member(workspace_id));
+drop policy if exists decision_links_insert_admin on public.decision_links;
+create policy decision_links_insert_admin on public.decision_links for insert to authenticated
+with check (public.is_workspace_admin(workspace_id) and created_by = auth.uid());
+drop policy if exists decision_links_delete_admin on public.decision_links;
+create policy decision_links_delete_admin on public.decision_links for delete to authenticated
+using (public.is_workspace_admin(workspace_id));
+
+-- A decision receives one review at 30/90/180 days. The unique constraint makes
+-- the daily scheduler race-safe.
+create table if not exists public.decision_outcome_reviews (
+  id uuid primary key default gen_random_uuid(),
+  decision_id uuid not null references public.decisions(id) on delete cascade,
+  workspace_id uuid not null references public.workspaces(id) on delete cascade,
+  scheduled_for date not null,
+  review_type text not null check (review_type in ('30d','90d','180d')),
+  status text not null default 'pending' check (status in ('pending','completed','skipped','overdue')),
+  was_successful boolean,
+  score integer check (score between 1 and 5),
+  what_happened text,
+  lessons text,
+  should_reverse boolean not null default false,
+  reverse_reason text,
+  reviewed_by uuid references public.profiles(id) on delete set null,
+  reviewed_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique(decision_id, review_type)
+);
+create index if not exists decision_outcome_reviews_decision_idx on public.decision_outcome_reviews(decision_id, scheduled_for);
+create index if not exists decision_outcome_reviews_workspace_status_idx on public.decision_outcome_reviews(workspace_id, status);
+create index if not exists decision_outcome_reviews_pending_idx on public.decision_outcome_reviews(scheduled_for) where status in ('pending','overdue');
+
+alter table public.decision_outcome_reviews enable row level security;
+drop policy if exists decision_outcome_reviews_select_member on public.decision_outcome_reviews;
+create policy decision_outcome_reviews_select_member on public.decision_outcome_reviews for select to authenticated
+using (public.is_workspace_member(workspace_id));
+
+-- Only the decision owner, creator, or workspace admin can submit a review.
+create or replace function public.submit_decision_outcome_review(
+  p_review_id uuid,
+  p_was_successful boolean,
+  p_score integer,
+  p_what_happened text default null,
+  p_lessons text default null,
+  p_should_reverse boolean default false,
+  p_reverse_reason text default null
+)
+returns public.decision_outcome_reviews
+language plpgsql security definer set search_path = public
+as $$
+declare r public.decision_outcome_reviews; d public.decisions; avg_score numeric;
+begin
+  if auth.uid() is null then raise exception 'Not authenticated'; end if;
+  if p_score < 1 or p_score > 5 then raise exception 'Score must be between 1 and 5'; end if;
+
+  select * into r from public.decision_outcome_reviews where id = p_review_id for update;
+  if r.id is null then raise exception 'Outcome review not found'; end if;
+  select * into d from public.decisions where id = r.decision_id;
+  if d.id is null then raise exception 'Decision not found'; end if;
+  if not public.is_workspace_member(r.workspace_id) then raise exception 'Not a workspace member'; end if;
+  if not (public.is_workspace_admin(r.workspace_id) or d.owner_id = auth.uid() or d.created_by = auth.uid()) then
+    raise exception 'Only the decision owner, creator, or workspace admin can submit this review';
+  end if;
+
+  update public.decision_outcome_reviews
+  set status = 'completed',
+      was_successful = p_was_successful,
+      score = p_score,
+      what_happened = nullif(trim(coalesce(p_what_happened,'')), ''),
+      lessons = nullif(trim(coalesce(p_lessons,'')), ''),
+      should_reverse = p_should_reverse,
+      reverse_reason = nullif(trim(coalesce(p_reverse_reason,'')), ''),
+      reviewed_by = auth.uid(),
+      reviewed_at = now(),
+      updated_at = now()
+  where id = p_review_id
+  returning * into r;
+
+  select avg(score)::numeric(4,2) into avg_score
+  from public.decision_outcome_reviews
+  where decision_id = r.decision_id and status = 'completed' and score is not null;
+
+  update public.decisions
+  set outcome_score = avg_score,
+      last_outcome_review_at = now(),
+      is_reversed = case when p_should_reverse then true else is_reversed end,
+      reversed_at = case when p_should_reverse then now() else reversed_at end,
+      reversed_by = case when p_should_reverse then auth.uid() else reversed_by end,
+      reversal_reason = case when p_should_reverse then nullif(trim(coalesce(p_reverse_reason,'')), '') else reversal_reason end,
+      updated_at = now()
+  where id = r.decision_id;
+
+  insert into public.decision_history(decision_id,status,outcome,note,changed_by)
+  values (
+    r.decision_id,
+    d.status,
+    d.outcome,
+    case
+      when p_should_reverse then 'Outcome review completed: decision reversed. ' || coalesce(nullif(trim(p_reverse_reason), ''), '')
+      else 'Outcome review completed: ' || case when p_was_successful then 'successful' else 'not successful' end || ' (' || p_score || '/5).'
+    end,
+    auth.uid()
+  );
+
+  return r;
+end;
+$$;
+grant execute on function public.submit_decision_outcome_review(uuid, boolean, integer, text, text, boolean, text) to authenticated;
+
+-- Daily scheduler: service role only. It is idempotent and also marks late
+-- reviews overdue so the UI can surface them clearly.
+create or replace function public.create_due_decision_outcome_reviews()
+returns integer
+language plpgsql security definer set search_path = public
+as $$
+declare d record; inserted_count integer := 0; review_date date; review_kind text;
+begin
+  update public.decision_outcome_reviews
+  set status = 'overdue', updated_at = now()
+  where status = 'pending' and scheduled_for < current_date;
+
+  for d in
+    select id, workspace_id, decided_at
+    from public.decisions
+    where status = 'decided' and decided_at is not null
+  loop
+    foreach review_kind in array array['30d','90d','180d'] loop
+      review_date := case review_kind
+        when '30d' then (d.decided_at::date + 30)
+        when '90d' then (d.decided_at::date + 90)
+        else (d.decided_at::date + 180)
+      end;
+      insert into public.decision_outcome_reviews(decision_id,workspace_id,scheduled_for,review_type)
+      values(d.id,d.workspace_id,review_date,review_kind)
+      on conflict (decision_id,review_type) do nothing;
+      if found then
+        inserted_count := inserted_count + 1;
+        insert into public.notifications(user_id,type,title,body)
+        select coalesce(dec.owner_id, dec.created_by),
+          'decision_outcome_review',
+          'Outcome review due',
+          'Your ' || review_kind || ' outcome review is scheduled for decision: ' || dec.title
+        from public.decisions dec
+        where dec.id = d.id
+          and coalesce(dec.owner_id, dec.created_by) is not null;
+      end if;
+    end loop;
+  end loop;
+  return inserted_count;
+end;
+$$;
+revoke all on function public.create_due_decision_outcome_reviews() from public;
+grant execute on function public.create_due_decision_outcome_reviews() to service_role;
+
+do $$ begin
+  alter publication supabase_realtime add table public.decision_links;
+exception when duplicate_object then null; end $$;
+do $$ begin
+  alter publication supabase_realtime add table public.decision_outcome_reviews;
+exception when duplicate_object then null; end $$;
+
+notify pgrst, 'reload schema';
+
+
+-- Optional pg_cron schedule (Database > Extensions > pg_cron):
+-- select cron.schedule(
+--   'pulse-outcome-reviews',
+--   '15 2 * * *',
+--   $$ select public.create_due_decision_outcome_reviews(); $$
+-- );
