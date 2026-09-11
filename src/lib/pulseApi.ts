@@ -1283,6 +1283,21 @@ async function notifyByPush(userId: string, category: 'mentions' | 'decisions' |
   catch { /* best-effort — push failures never block the underlying action */ }
 }
 
+export interface PulseNotification { id: string; type: string; title: string; body: string | null; readAt: string | null; createdAt: string; }
+
+export async function listNotifications(limit = 40): Promise<PulseNotification[]> {
+  if (!supabase) return [];
+  const { data, error } = await supabase.from('notifications').select('*').order('created_at', { ascending: false }).limit(limit);
+  if (error) throw new Error(error.message);
+  return (data ?? []).map((n) => ({ id: n.id, type: n.type, title: n.title, body: n.body, readAt: n.read_at, createdAt: n.created_at }));
+}
+
+export async function markNotificationRead(id: string) {
+  if (!supabase) return;
+  const { error } = await supabase.from('notifications').update({ read_at: new Date().toISOString() }).eq('id', id);
+  if (error) throw new Error(error.message);
+}
+
 export async function notifyActionAssigned(ownerId: string, actionTitle: string, workspaceName: string) {
   await Promise.all([
     notifyByEmail(ownerId, 'actions', `New action assigned: ${actionTitle}`, 'You\'ve been assigned an action', `You were assigned "${actionTitle}" in ${workspaceName}.`),
@@ -1298,6 +1313,46 @@ export async function notifyMentioned(mentionedUserId: string, mentionerName: st
 }
 
 // ============================================================================
+// ============================================================================
+// PULSE Automation
+// ============================================================================
+
+export interface AutomationRule {
+  id: string; workspaceId: string; name: string; trigger: string; enabled: boolean;
+}
+
+export interface AutomationRun {
+  id: string; ruleName: string; actionCount: number; createdAt: string;
+}
+
+export async function listAutomationRules(workspaceId: string): Promise<AutomationRule[]> {
+  if (!supabase) return [];
+  const { data, error } = await supabase.from('automation_rules').select('*').eq('workspace_id', workspaceId).order('created_at');
+  if (error) throw new Error(error.message);
+  return (data ?? []).map((r) => ({ id: r.id, workspaceId: r.workspace_id, name: r.name, trigger: r.trigger, enabled: r.enabled }));
+}
+
+export async function updateAutomationRule(id: string, enabled: boolean) {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const { error } = await supabase.from('automation_rules').update({ enabled }).eq('id', id);
+  if (error) throw new Error(error.message);
+}
+
+export async function runWorkspaceAutomations(workspaceId: string): Promise<{ processed: number; notifications: number }> {
+  if (!supabase) return { processed: 0, notifications: 0 };
+  const { data, error } = await supabase.rpc('run_workspace_automations', { target_workspace: workspaceId });
+  if (error) throw new Error(error.message);
+  const row = Array.isArray(data) ? data[0] : data;
+  return { processed: Number(row?.processed ?? 0), notifications: Number(row?.notifications ?? 0) };
+}
+
+export async function listAutomationRuns(workspaceId: string): Promise<AutomationRun[]> {
+  if (!supabase) return [];
+  const { data, error } = await supabase.from('automation_runs').select('id,rule_id,action_count,created_at,automation_rules(name)').eq('workspace_id', workspaceId).order('created_at', { ascending: false }).limit(30);
+  if (error) throw new Error(error.message);
+  return (data ?? []).map((r: any) => ({ id: r.id, ruleName: r.automation_rules?.name ?? 'Automation', actionCount: Number(r.action_count ?? 0), createdAt: r.created_at }));
+}
+
 // Workspace general settings + usage
 // ============================================================================
 

@@ -12,6 +12,7 @@ export type AppView =
   | 'meeting-summaries'
   | 'team'
   | 'notifications'
+  | 'automation'
   | 'invitations'
   | 'audit-log'
   | 'settings'

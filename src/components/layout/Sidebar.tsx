@@ -2,7 +2,7 @@ import { useState } from 'react';
 import {
   Activity, BarChart3, Bell, Brain, CheckSquare, ChevronDown, ClipboardList, Folder, HelpCircle,
   History, Home, Keyboard, LayoutGrid, MessageCircle, MoreVertical, Plug, PanelLeftClose,
-  PanelLeftOpen, PieChart, Settings, ShieldAlert, Sparkles, TrendingUp, UserPlus, Users,
+  PanelLeftOpen, PieChart, Settings, ShieldAlert, Sparkles, TrendingUp, UserPlus, Users, Zap,
 } from 'lucide-react';
 import { useAuth } from '@/auth/AuthProvider';
 import { useTranslation } from '@/lib/i18n/I18nProvider';
@@ -36,6 +36,7 @@ export const intelligenceItems: NavItem[] = [
 export const teamItems: NavItem[] = [
   { id: 'team', labelKey: 'nav_team', icon: Users },
   { id: 'notifications', labelKey: 'nav_notifications', icon: Bell },
+  { id: 'automation', labelKey: 'nav_automation', icon: Zap },
   { id: 'invitations', labelKey: 'nav_invitations', icon: UserPlus },
   { id: 'audit-log', labelKey: 'nav_audit_log', icon: History },
 ];

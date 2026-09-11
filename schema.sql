@@ -2,11 +2,30 @@
 -- Run this once in Supabase SQL Editor.
 create extension if not exists pgcrypto;
 
-create type public.workspace_role as enum ('owner', 'admin', 'member', 'guest');
-create type public.discussion_status as enum ('active', 'heating', 'settling', 'archived');
-create type public.decision_status as enum ('decided', 'in-review', 'revisiting');
-create type public.poll_status as enum ('draft', 'open', 'closed');
-create type public.intent_wave as enum ('whisper', 'standard', 'pulse');
+do $$ begin
+  create type public.workspace_role as enum ('owner', 'admin', 'member', 'guest');
+exception when duplicate_object then null;
+end $$;
+
+do $$ begin
+  create type public.discussion_status as enum ('active', 'heating', 'settling', 'archived');
+exception when duplicate_object then null;
+end $$;
+
+do $$ begin
+  create type public.decision_status as enum ('decided', 'in-review', 'revisiting');
+exception when duplicate_object then null;
+end $$;
+
+do $$ begin
+  create type public.poll_status as enum ('draft', 'open', 'closed');
+exception when duplicate_object then null;
+end $$;
+
+do $$ begin
+  create type public.intent_wave as enum ('whisper', 'standard', 'pulse');
+exception when duplicate_object then null;
+end $$;
 
 create table if not exists public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
@@ -1161,3 +1180,78 @@ drop trigger if exists on_sso_user_created on auth.users;
 create trigger on_sso_user_created after insert on auth.users for each row execute procedure public.handle_sso_login();
 
 notify pgrst, 'reload schema';
+
+
+-- ============================================================================
+-- PULSE Automation Engine (idempotent)
+-- ============================================================================
+create table if not exists public.automation_rules (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references public.workspaces(id) on delete cascade,
+  name text not null,
+  trigger text not null check (trigger in ('action_due_soon','action_overdue','high_priority_overdue')),
+  enabled boolean not null default true,
+  created_at timestamptz not null default now(),
+  unique(workspace_id, trigger)
+);
+
+create table if not exists public.automation_runs (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references public.workspaces(id) on delete cascade,
+  rule_id uuid not null references public.automation_rules(id) on delete cascade,
+  action_count integer not null default 0,
+  created_at timestamptz not null default now()
+);
+
+alter table public.automation_rules enable row level security;
+alter table public.automation_runs enable row level security;
+drop policy if exists automation_rules_member on public.automation_rules;
+create policy automation_rules_member on public.automation_rules for select to authenticated using (public.is_workspace_member(workspace_id));
+drop policy if exists automation_rules_admin_update on public.automation_rules;
+create policy automation_rules_admin_update on public.automation_rules for update to authenticated using (public.is_workspace_admin(workspace_id)) with check (public.is_workspace_admin(workspace_id));
+drop policy if exists automation_runs_member on public.automation_runs;
+create policy automation_runs_member on public.automation_runs for select to authenticated using (public.is_workspace_member(workspace_id));
+
+create or replace function public.seed_automation_rules(target_workspace uuid) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if not public.is_workspace_member(target_workspace) then raise exception 'Not authorized'; end if;
+  insert into public.automation_rules(workspace_id,name,trigger) values
+    (target_workspace,'Upcoming action reminder','action_due_soon'),
+    (target_workspace,'Overdue action alert','action_overdue'),
+    (target_workspace,'High-priority escalation','high_priority_overdue')
+  on conflict (workspace_id,trigger) do nothing;
+end; $$;
+
+create or replace function public.run_workspace_automations(target_workspace uuid)
+returns table(processed integer, notifications integer)
+language plpgsql security definer set search_path = public as $$
+declare
+  r record; a record; p integer := 0; n integer := 0; already boolean;
+begin
+  if not public.is_workspace_member(target_workspace) then raise exception 'Not authorized'; end if;
+  perform public.seed_automation_rules(target_workspace);
+  for r in select * from public.automation_rules where workspace_id=target_workspace and enabled loop
+    for a in
+      select ac.id, ac.title, ac.owner_id, ac.deadline, ac.priority
+      from public.actions ac
+      where ac.workspace_id=target_workspace and ac.status <> 'done' and ac.owner_id is not null
+        and ((r.trigger='action_overdue' and ac.deadline < now())
+          or (r.trigger='high_priority_overdue' and ac.priority='high' and ac.deadline < now())
+          or (r.trigger='action_due_soon' and ac.deadline >= now() and ac.deadline <= now()+interval '48 hours'))
+    loop
+      p := p + 1;
+      select exists(select 1 from public.notifications x where x.user_id=a.owner_id and x.type='automation:'||r.trigger and x.body like '%'||a.id::text||'%' and x.created_at > now()-interval '24 hours') into already;
+      if not already then
+        insert into public.notifications(user_id,type,title,body) values
+          (a.owner_id,'automation:'||r.trigger,r.name, a.title||' ['||a.id::text||']');
+        n := n + 1;
+      end if;
+    end loop;
+    insert into public.automation_runs(workspace_id,rule_id,action_count) values(target_workspace,r.id,p);
+  end loop;
+  return query select p,n;
+end; $$;
+
+grant execute on function public.run_workspace_automations(uuid) to authenticated;
+grant execute on function public.seed_automation_rules(uuid) to authenticated;
