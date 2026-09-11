@@ -16,6 +16,9 @@ const kindLabel: Record<RiskItem['kind'], string> = {
   disagreement: 'Team disagreement',
   'missing-evidence': 'Decision needs evidence',
   'overdue-action': 'Overdue action',
+  'overdue-outcome-review': 'Outcome review overdue',
+  'low-outcome-score': 'Low outcome score',
+  'blocked-decision': 'Blocked decision',
 };
 
 const kindCopy: Record<RiskItem['kind'], string> = {
@@ -23,6 +26,9 @@ const kindCopy: Record<RiskItem['kind'], string> = {
   disagreement: 'Resolve the split before committing the team to an outcome.',
   'missing-evidence': 'Collect the missing evidence and bring it back into the Decision Room.',
   'overdue-action': 'Reassign, reschedule, or finish the action so execution can move again.',
+  'overdue-outcome-review': 'Review whether the decision worked and capture the lesson while it is still actionable.',
+  'low-outcome-score': 'Inspect the evidence and outcome; consider adjusting or reversing the decision.',
+  'blocked-decision': 'Resolve the dependency or missed deadline before the decision creates more execution risk.',
 };
 
 export function RiskCenterView({ workspaceId, onNavigate, onOpenDecision }: { workspaceId: string; onNavigate: (view: AppView) => void; onOpenDecision: (id: string) => void }) {
@@ -112,7 +118,7 @@ export function RiskCenterView({ workspaceId, onNavigate, onOpenDecision }: { wo
                 <div className="mt-2 flex items-start gap-1.5 text-[11px] text-ink-500"><Target className="mt-0.5 h-3.5 w-3.5 shrink-0 text-pulse-300" />{kindCopy[risk.kind]}</div>
                 <div className="mt-3 flex flex-wrap gap-2">
                   <button onClick={() => void takeAction(risk)} disabled={workingId === risk.id} className="primary-btn disabled:opacity-40">
-                    {risk.kind === 'overdue-action' ? <><CheckSquare className="h-3.5 w-3.5" /> Open actions</> : risk.kind === 'disagreement' || risk.kind === 'missing-evidence' ? <><ArrowRight className="h-3.5 w-3.5" /> Open Decision Room</> : <><CheckSquare className="h-3.5 w-3.5" /> {workingId === risk.id ? 'Creating…' : 'Create unblock action'}</>}
+                    {risk.kind === 'overdue-action' ? <><CheckSquare className="h-3.5 w-3.5" /> Open actions</> : risk.kind === 'disagreement' || risk.kind === 'missing-evidence' || risk.kind === 'overdue-outcome-review' || risk.kind === 'low-outcome-score' || risk.kind === 'blocked-decision' ? <><ArrowRight className="h-3.5 w-3.5" /> Open Decision Room</> : <><CheckSquare className="h-3.5 w-3.5" /> {workingId === risk.id ? 'Creating…' : 'Create unblock action'}</>}
                   </button>
                   <button onClick={() => setResolved((current) => [...current, risk.id])} className="secondary-btn"><X className="h-3.5 w-3.5" /> Dismiss for now</button>
                 </div>

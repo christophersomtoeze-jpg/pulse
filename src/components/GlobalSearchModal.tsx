@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { FileText, FolderOpen, MessageCircle, Search, User, Vote, X } from 'lucide-react';
-import { globalSearch } from '@/lib/pulseApi';
-import type { GlobalSearchResults } from '@/types';
+import { FileText, FolderOpen, MessageCircle, Search, User, Vote, X, Sparkles } from 'lucide-react';
+
+import { globalSearch, smartDecisionSearch } from '@/lib/pulseApi';
+import type { GlobalSearchResults, SmartSearchResult } from '@/types';
 import type { AppView } from '@/lib/viewTypes';
 
 const EMPTY: GlobalSearchResults = { discussions: [], decisions: [], actions: [], resources: [], people: [] };
@@ -18,21 +19,24 @@ export function GlobalSearchModal({ open, workspaceId, onClose, onNavigate }: Gl
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<GlobalSearchResults>(EMPTY);
   const [busy, setBusy] = useState(false);
+  const [smartResults, setSmartResults] = useState<SmartSearchResult[]>([]);
 
   useEffect(() => {
-    if (!open) { setQuery(''); setResults(EMPTY); }
+    if (!open) { setQuery(''); setResults(EMPTY); setSmartResults([]); }
   }, [open]);
 
   useEffect(() => {
-    if (!workspaceId || !query.trim()) { setResults(EMPTY); return; }
+    if (!workspaceId || !query.trim()) { setResults(EMPTY); setSmartResults([]); return; }
     const timer = setTimeout(() => {
       setBusy(true);
-      globalSearch(workspaceId, query).then(setResults).finally(() => setBusy(false));
+      Promise.all([globalSearch(workspaceId, query), smartDecisionSearch(workspaceId, query)])
+        .then(([basic, smart]) => { setResults(basic); setSmartResults(smart); })
+        .finally(() => setBusy(false));
     }, 250);
     return () => clearTimeout(timer);
   }, [query, workspaceId]);
 
-  const totalResults = results.discussions.length + results.decisions.length + results.actions.length + results.resources.length + results.people.length;
+  const totalResults = smartResults.length || results.discussions.length + results.decisions.length + results.actions.length + results.resources.length + results.people.length;
   const go = (view: AppView) => { onNavigate(view); onClose(); };
 
   return (
@@ -48,6 +52,17 @@ export function GlobalSearchModal({ open, workspaceId, onClose, onNavigate }: Gl
 
             <div className="max-h-[55vh] overflow-y-auto p-2">
               {!query.trim() && <p className="p-6 text-center text-xs text-ink-500">Search discussions, decisions, actions, resources, and people.</p>}
+              {query.trim() && !busy && smartResults.length > 0 && (
+                <div className="mb-3">
+                  <div className="flex items-center gap-1.5 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-pulse-300"><Sparkles className="h-3 w-3" /> Smart matches</div>
+                  {smartResults.slice(0, 10).map((r) => (
+                    <button key={`${r.type}-${r.id}`} onClick={() => go(r.type === 'decision' || r.type === 'history' ? 'decisions' : r.type === 'discussion' ? 'discussions' : r.type === 'action' ? 'actions' : 'resources')} className="w-full rounded-xl px-2 py-2 text-left hover:bg-white/5">
+                      <div className="flex items-center gap-2"><span className="rounded-md border border-white/10 px-1.5 py-0.5 text-[8px] uppercase tracking-wide text-ink-500">{r.type}</span><span className="truncate text-sm font-medium">{r.title}</span>{r.outcomeScore != null && <span className="ml-auto shrink-0 text-[9px] text-pulse-300">{r.outcomeScore}/5</span>}</div>
+                      <p className="mt-0.5 truncate pl-0 text-[10px] text-ink-500">{r.snippet}</p>
+                    </button>
+                  ))}
+                </div>
+              )}
               {query.trim() && !busy && totalResults === 0 && <p className="p-6 text-center text-xs text-ink-500">No matches for "{query}".</p>}
 
               {results.discussions.length > 0 && (

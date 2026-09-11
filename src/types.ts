@@ -209,6 +209,18 @@ export interface GlobalSearchResults {
   people: { id: string; name: string; email: string }[];
 }
 
+export interface SmartSearchResult {
+  id: string;
+  type: 'decision' | 'discussion' | 'action' | 'resource' | 'history';
+  title: string;
+  snippet: string;
+  score: number;
+  decisionId?: string;
+  outcome?: string | null;
+  outcomeScore?: number | null;
+  updatedAt?: string;
+}
+
 // ---- Phase 4: AI ----
 export interface AssistantMessage {
   id: string;
@@ -230,7 +242,7 @@ export interface MeetingSummary {
 export type RiskSeverity = 'high' | 'medium' | 'low';
 export interface RiskItem {
   id: string;
-  kind: 'stalled-discussion' | 'disagreement' | 'missing-evidence' | 'overdue-action';
+  kind: 'stalled-discussion' | 'disagreement' | 'missing-evidence' | 'overdue-action' | 'overdue-outcome-review' | 'low-outcome-score' | 'blocked-decision';
   severity: RiskSeverity;
   title: string;
   detail: string;

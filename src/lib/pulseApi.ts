@@ -4,7 +4,7 @@ import type {
   DecisionOutcome, DecisionResource, DecisionSummary, DecisionVoteTally, VoteChoice,
   WorkspaceAction, ActionStatus, ActionPriority, GlobalSearchResults,
   AssistantMessage, MeetingSummary, RiskItem, WorkspaceListItem, AuditLogEntry,
-  AnalyticsSnapshot, WorkspaceSubscription, WorkspaceIntegration, IntegrationProvider, PlatformMetrics,
+  AnalyticsSnapshot, SmartSearchResult, WorkspaceSubscription, WorkspaceIntegration, IntegrationProvider, PlatformMetrics,
   ProfileDetails, NotificationPreferences, LoginHistoryEntry, WorkspaceGeneralSettings, WorkspaceUsage,
   ApiKeySummary, IncomingWebhookSummary, SsoDomainSummary,
   DecisionLink, DecisionRelationshipType, DecisionOutcomeReview, OutcomeReviewType, DecisionGateAnswers,
@@ -962,6 +962,45 @@ export async function updateActionStatus(actionId: string, status: ActionStatus)
 // Phase 3: Global search + decision-history search
 // ============================================================================
 
+export async function smartDecisionSearch(workspaceId: string, query: string): Promise<SmartSearchResult[]> {
+  if (!supabase || !query.trim()) return [];
+  const raw = query.trim().toLowerCase();
+  const tokens = raw.split(/\s+/).map((t) => t.replace(/[^a-z0-9_-]/g, '')).filter(Boolean);
+  const like = `%${query.trim()}%`;
+  const [decisionsRes, discussionsRes, actionsRes, resourcesRes, historyRes] = await Promise.all([
+    supabase.from('decisions').select('id,title,description,outcome,outcome_score,updated_at').eq('workspace_id', workspaceId).or(`title.ilike.${like},description.ilike.${like}`).order('updated_at', { ascending: false }).limit(80),
+    supabase.from('discussions').select('id,title,summary,updated_at').eq('workspace_id', workspaceId).or(`title.ilike.${like},summary.ilike.${like}`).order('updated_at', { ascending: false }).limit(40),
+    supabase.from('actions').select('id,title,description,status,updated_at,decision_id').eq('workspace_id', workspaceId).or(`title.ilike.${like},description.ilike.${like}`).order('updated_at', { ascending: false }).limit(40),
+    supabase.from('resources').select('id,name,url,decision_id,created_at').eq('workspace_id', workspaceId).ilike('name', like).order('created_at', { ascending: false }).limit(40),
+    supabase.from('decision_history').select('id,status,outcome,note,created_at,decision:decision_id(id,title,workspace_id)').order('created_at', { ascending: false }).limit(160),
+  ]);
+  for (const r of [decisionsRes, discussionsRes, actionsRes, resourcesRes, historyRes]) if (r.error) throw new Error(r.error.message);
+  const results: SmartSearchResult[] = [];
+  const rank = (text: string, freshness = 0) => {
+    const hay = text.toLowerCase();
+    let score = 0;
+    if (hay === raw) score += 100;
+    if (hay.includes(raw)) score += 55;
+    for (const token of tokens) if (token.length > 2 && hay.includes(token)) score += 12;
+    return score + freshness;
+  };
+  const freshness = (value?: string | null) => value ? Math.max(0, 10 - (Date.now() - new Date(value).getTime()) / 86400000 / 30) : 0;
+  for (const d of decisionsRes.data ?? []) results.push({ id:d.id,type:'decision',title:d.title,snippet:d.description || 'Decision record',score:rank(`${d.title} ${d.description ?? ''}`, freshness(d.updated_at)) + (d.outcome ? 2 : 0) + (d.outcome_score != null ? 1 : 0),decisionId:d.id,outcome:d.outcome,outcomeScore:d.outcome_score,updatedAt:d.updated_at });
+  for (const d of discussionsRes.data ?? []) results.push({ id:d.id,type:'discussion',title:d.title,snippet:d.summary || 'Discussion',score:rank(`${d.title} ${d.summary ?? ''}`, freshness(d.updated_at)),updatedAt:d.updated_at });
+  for (const a of actionsRes.data ?? []) results.push({ id:a.id,type:'action',title:a.title,snippet:a.description || a.status,score:rank(`${a.title} ${a.description ?? ''}`, freshness(a.updated_at)),decisionId:a.decision_id ?? undefined,updatedAt:a.updated_at });
+  for (const r of resourcesRes.data ?? []) results.push({ id:r.id,type:'resource',title:r.name,snippet:r.url || 'Attached resource',score:rank(`${r.name} ${r.url ?? ''}`, freshness(r.created_at)),decisionId:r.decision_id ?? undefined,updatedAt:r.created_at });
+  type H = { id:string; status:string|null; outcome:string|null; note:string|null; created_at:string; decision:{id:string;title:string;workspace_id:string}|{id:string;title:string;workspace_id:string}[]|null };
+  for (const rawRow of (historyRes.data ?? []) as unknown as H[]) {
+    const d = Array.isArray(rawRow.decision) ? rawRow.decision[0] : rawRow.decision;
+    if (!d || d.workspace_id !== workspaceId) continue;
+    const title = `${d.title} history`;
+    const snippet = rawRow.note || rawRow.outcome || rawRow.status || 'Decision history event';
+    const score = rank(`${d.title} ${snippet}`, freshness(rawRow.created_at)) + 3;
+    if (score >= 12) results.push({ id:rawRow.id,type:'history',title,snippet,score,decisionId:d.id,outcome:rawRow.outcome,updatedAt:rawRow.created_at });
+  }
+  return results.filter((r) => r.score >= 12).sort((a,b) => b.score-a.score).slice(0, 30);
+}
+
 export async function globalSearch(workspaceId: string, query: string): Promise<GlobalSearchResults> {
   const empty: GlobalSearchResults = { discussions: [], decisions: [], actions: [], resources: [], people: [] };
   if (!supabase || !query.trim()) return empty;
@@ -1092,67 +1131,48 @@ export async function computeRisks(workspaceId: string): Promise<RiskItem[]> {
   const risks: RiskItem[] = [];
   const STALE_DAYS = 4;
   const now = Date.now();
-
-  const [discussionsRes, decisionsRes, tallyRes, actionsRes] = await Promise.all([
+  const [discussionsRes, decisionsRes, tallyRes, actionsRes, reviewsRes, linksRes] = await Promise.all([
     supabase.from('discussions').select('id,title,updated_at,status').eq('workspace_id', workspaceId),
-    supabase.from('decisions').select('id,title,created_at,outcome').eq('workspace_id', workspaceId).is('outcome', null),
+    supabase.from('decisions').select('id,title,created_at,updated_at,outcome,deadline,outcome_score,is_reversed').eq('workspace_id', workspaceId),
     supabase.from('decision_votes').select('decision_id,choice'),
-    supabase.from('actions').select('id,title,deadline,status').eq('workspace_id', workspaceId).neq('status', 'done'),
+    supabase.from('actions').select('id,title,deadline,status,decision_id').eq('workspace_id', workspaceId).neq('status', 'done'),
+    supabase.from('decision_outcome_reviews').select('id,decision_id,scheduled_for,status,review_type').eq('workspace_id', workspaceId).in('status', ['pending','overdue']),
+    supabase.from('decision_links').select('from_decision_id,to_decision_id,relationship_type').eq('workspace_id', workspaceId),
   ]);
-  if (discussionsRes.error) throw new Error(discussionsRes.error.message);
-  if (decisionsRes.error) throw new Error(decisionsRes.error.message);
-  if (tallyRes.error) throw new Error(tallyRes.error.message);
-  if (actionsRes.error) throw new Error(actionsRes.error.message);
+  for (const r of [discussionsRes, decisionsRes, tallyRes, actionsRes, reviewsRes, linksRes]) if (r.error) throw new Error(r.error.message);
 
   for (const d of discussionsRes.data ?? []) {
     if (d.status === 'archived') continue;
     const daysSince = (now - new Date(d.updated_at).getTime()) / 86400000;
-    if (daysSince >= STALE_DAYS) {
-      risks.push({
-        id: `stalled-${d.id}`, kind: 'stalled-discussion', severity: daysSince >= 8 ? 'high' : 'medium',
-        title: d.title, detail: `No activity for ${Math.floor(daysSince)} days.`, linkId: d.id,
-      });
-    }
+    if (daysSince >= STALE_DAYS) risks.push({ id:`stalled-${d.id}`, kind:'stalled-discussion', severity:daysSince >= 8 ? 'high' : 'medium', title:d.title, detail:`No activity for ${Math.floor(daysSince)} days.`, linkId:d.id });
   }
 
-  const openDecisions = decisionsRes.data ?? [];
-  const votesByDecision = new Map<string, { yes: number; no: number }>();
-  for (const v of tallyRes.data ?? []) {
-    const entry = votesByDecision.get(v.decision_id) ?? { yes: 0, no: 0 };
-    if (v.choice === 'yes') entry.yes += 1;
-    else if (v.choice === 'no') entry.no += 1;
-    votesByDecision.set(v.decision_id, entry);
-  }
+  const decisions = decisionsRes.data ?? [];
+  const openDecisions = decisions.filter((d) => !d.outcome);
+  const byDecision = new Map<string,{yes:number;no:number}>();
+  for (const v of tallyRes.data ?? []) { const e=byDecision.get(v.decision_id) ?? {yes:0,no:0}; if(v.choice==='yes')e.yes++; else if(v.choice==='no')e.no++; byDecision.set(v.decision_id,e); }
   for (const d of openDecisions) {
-    const tally = votesByDecision.get(d.id);
-    if (!tally) continue;
-    const total = tally.yes + tally.no;
-    if (total >= 3 && Math.abs(tally.yes - tally.no) / total <= 0.2) {
-      risks.push({
-        id: `disagreement-${d.id}`, kind: 'disagreement', severity: 'high',
-        title: d.title, detail: `Split vote: ${tally.yes} yes vs ${tally.no} no.`, linkId: d.id,
-      });
-    }
-    const ageDays = (now - new Date(d.created_at).getTime()) / 86400000;
-    if (ageDays >= 7) {
-      risks.push({
-        id: `stuck-${d.id}`, kind: 'missing-evidence', severity: ageDays >= 14 ? 'high' : 'medium',
-        title: d.title, detail: `In review for ${Math.floor(ageDays)} days with no recorded outcome.`, linkId: d.id,
-      });
-    }
+    const tally=byDecision.get(d.id);
+    if (tally) { const total=tally.yes+tally.no; if(total>=3 && Math.abs(tally.yes-tally.no)/total<=0.2) risks.push({id:`disagreement-${d.id}`,kind:'disagreement',severity:'high',title:d.title,detail:`Split vote: ${tally.yes} yes vs ${tally.no} no.`,linkId:d.id}); }
+    const ageDays=(now-new Date(d.created_at).getTime())/86400000;
+    if(ageDays>=7) risks.push({id:`stuck-${d.id}`,kind:'missing-evidence',severity:ageDays>=14?'high':'medium',title:d.title,detail:`In review for ${Math.floor(ageDays)} days with no recorded outcome.`,linkId:d.id});
+    if(d.deadline && new Date(d.deadline).getTime()<now) risks.push({id:`decision-deadline-${d.id}`,kind:'blocked-decision',severity:'high',title:d.title,detail:`Decision deadline passed on ${new Date(d.deadline).toLocaleDateString()}.`,linkId:d.id});
   }
+  for (const a of actionsRes.data ?? []) if(a.deadline && new Date(a.deadline).getTime()<now) risks.push({id:`overdue-${a.id}`,kind:'overdue-action',severity:'medium',title:a.title,detail:`Was due ${new Date(a.deadline).toLocaleDateString()}.`,linkId:a.decision_id ?? a.id});
 
-  for (const a of actionsRes.data ?? []) {
-    if (!a.deadline) continue;
-    if (new Date(a.deadline).getTime() < now) {
-      risks.push({
-        id: `overdue-${a.id}`, kind: 'overdue-action', severity: 'medium',
-        title: a.title, detail: `Was due ${new Date(a.deadline).toLocaleDateString()}.`, linkId: a.id,
-      });
-    }
+  const decisionMap=new Map(decisions.map(d=>[d.id,d]));
+  for (const r of reviewsRes.data ?? []) {
+    const d=decisionMap.get(r.decision_id); if(!d || !d.outcome) continue;
+    const overdue=new Date(r.scheduled_for).getTime() < now;
+    if(overdue || r.status==='overdue') risks.push({id:`outcome-review-${r.id}`,kind:'overdue-outcome-review',severity:overdue?'high':'medium',title:d.title,detail:`${r.review_type} outcome review is ${overdue?'overdue':'due'}.`,linkId:d.id});
   }
+  for (const d of decisions) if(d.outcome_score != null && d.outcome_score <= 2 && !d.is_reversed) risks.push({id:`low-score-${d.id}`,kind:'low-outcome-score',severity:d.outcome_score<=1.5?'high':'medium',title:d.title,detail:`Average outcome score is ${Number(d.outcome_score).toFixed(1)}/5. Consider reviewing the decision or reversing it.`,linkId:d.id});
 
-  return risks.sort((a, b) => (a.severity === b.severity ? 0 : a.severity === 'high' ? -1 : 1));
+  const incoming=new Set<string>();
+  for(const l of linksRes.data ?? []) if(l.relationship_type==='depends_on' || l.relationship_type==='blocks') incoming.add(l.to_decision_id);
+  for(const id of incoming){ const d=decisionMap.get(id); if(d && !d.outcome) risks.push({id:`dependency-${id}`,kind:'blocked-decision',severity:'medium',title:d.title,detail:'This open decision is connected to a dependency or blocking decision.',linkId:id}); }
+  const priority: Record<RiskItem['kind'],number> = {'blocked-decision':5,'overdue-outcome-review':4,'low-outcome-score':4,disagreement:4,'missing-evidence':3,'overdue-action':3,'stalled-discussion':2};
+  return risks.sort((a,b)=>b.severity.localeCompare(a.severity)||priority[b.kind]-priority[a.kind]);
 }
 
 // ============================================================================
