@@ -1094,20 +1094,25 @@ export async function listWorkspaceIntegrations(workspaceId: string): Promise<Wo
   });
 }
 
-/** Kicks off Slack's OAuth flow. Requires VITE_SLACK_CLIENT_ID to be set (see SUPABASE_SETUP.md). */
-export function connectSlack(workspaceId: string) {
-  const clientId = import.meta.env.VITE_SLACK_CLIENT_ID as string | undefined;
-  if (!clientId) throw new Error('Slack is not configured yet — VITE_SLACK_CLIENT_ID is missing.');
-  const redirectUri = `${window.location.origin}/integrations/slack/callback`;
-  const scopes = ['channels:read', 'chat:write', 'channels:history'].join(',');
-  const url = `https://slack.com/oauth/v2/authorize?client_id=${encodeURIComponent(clientId)}&scope=${encodeURIComponent(scopes)}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${encodeURIComponent(workspaceId)}`;
-  window.location.assign(url);
+/** Starts a server-side, one-time-state OAuth flow for a provider. */
+export async function startIntegrationOAuth(workspaceId: string, provider: 'slack' | 'google' | 'microsoft365' | 'jira') {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const { data, error } = await supabase.functions.invoke('oauth-start', { body: { workspaceId, provider } });
+  if (error) throw new Error(error.message);
+  if (!data?.url) throw new Error(data?.error ?? 'Unable to start secure OAuth.');
+  window.location.assign(data.url);
 }
+
+export function connectSlack(workspaceId: string) { return startIntegrationOAuth(workspaceId, 'slack'); }
+export function connectGoogle(workspaceId: string) { return startIntegrationOAuth(workspaceId, 'google'); }
+export function connectMicrosoft(workspaceId: string) { return startIntegrationOAuth(workspaceId, 'microsoft365'); }
+export function connectJira(workspaceId: string) { return startIntegrationOAuth(workspaceId, 'jira'); }
 
 export async function disconnectIntegration(workspaceId: string, provider: IntegrationProvider) {
   if (!supabase) throw new Error('Supabase is not configured.');
-  const { error } = await supabase.from('workspace_integrations').update({ status: 'disconnected', access_token: null }).eq('workspace_id', workspaceId).eq('provider', provider);
+  const { data, error } = await supabase.functions.invoke('disconnect-integration', { body: { workspaceId, provider } });
   if (error) throw new Error(error.message);
+  if (data?.error) throw new Error(data.error);
 }
 
 export async function hasCastAnyVote(userId: string): Promise<boolean> {
@@ -1530,36 +1535,6 @@ export async function setDataRetentionDays(workspaceId: string, days: number | n
 // ============================================================================
 // Google / Microsoft / Jira / Notion integrations
 // ============================================================================
-
-export function connectGoogle(workspaceId: string) {
-  const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined;
-  if (!clientId) throw new Error('Google is not configured yet — VITE_GOOGLE_CLIENT_ID is missing.');
-  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string;
-  const redirectUri = `${supabaseUrl}/functions/v1/google-oauth-callback`;
-  const scopes = ['https://www.googleapis.com/auth/drive.readonly', 'https://www.googleapis.com/auth/calendar.readonly'].join(' ');
-  const url = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&access_type=offline&prompt=consent&scope=${encodeURIComponent(scopes)}&state=${encodeURIComponent(workspaceId)}`;
-  window.location.assign(url);
-}
-
-export function connectMicrosoft(workspaceId: string) {
-  const clientId = import.meta.env.VITE_MICROSOFT_CLIENT_ID as string | undefined;
-  if (!clientId) throw new Error('Microsoft is not configured yet — VITE_MICROSOFT_CLIENT_ID is missing.');
-  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string;
-  const redirectUri = `${supabaseUrl}/functions/v1/microsoft-oauth-callback`;
-  const scopes = 'offline_access User.Read Files.Read Calendars.Read ChannelMessage.Read.All';
-  const url = `https://login.microsoftonline.com/common/oauth2/v2.0/authorize?client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent(scopes)}&state=${encodeURIComponent(workspaceId)}`;
-  window.location.assign(url);
-}
-
-export function connectJira(workspaceId: string) {
-  const clientId = import.meta.env.VITE_JIRA_CLIENT_ID as string | undefined;
-  if (!clientId) throw new Error('Jira is not configured yet — VITE_JIRA_CLIENT_ID is missing.');
-  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string;
-  const redirectUri = `${supabaseUrl}/functions/v1/jira-oauth-callback`;
-  const scopes = 'read:jira-work write:jira-work offline_access';
-  const url = `https://auth.atlassian.com/authorize?audience=api.atlassian.com&client_id=${encodeURIComponent(clientId)}&scope=${encodeURIComponent(scopes)}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${encodeURIComponent(workspaceId)}&response_type=code&prompt=consent`;
-  window.location.assign(url);
-}
 
 export async function connectNotion(workspaceId: string, token: string): Promise<{ error: string | null }> {
   if (!supabase) return { error: 'Supabase is not configured.' };

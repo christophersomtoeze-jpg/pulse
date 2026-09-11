@@ -12,6 +12,7 @@
 // Set VITE_JIRA_CLIENT_ID in your frontend env (same value as JIRA_CLIENT_ID).
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
+import { consumeOAuthState } from '../_shared/oauthState.ts';
 
 const JIRA_CLIENT_ID = Deno.env.get('JIRA_CLIENT_ID');
 const JIRA_CLIENT_SECRET = Deno.env.get('JIRA_CLIENT_SECRET');
@@ -21,12 +22,17 @@ const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 Deno.serve(async (req) => {
   const url = new URL(req.url);
   const code = url.searchParams.get('code');
-  const workspaceId = url.searchParams.get('state');
+  const state = url.searchParams.get('state');
 
   if (!JIRA_CLIENT_ID || !JIRA_CLIENT_SECRET) {
     return new Response('Jira is not connected yet — set JIRA_CLIENT_ID and JIRA_CLIENT_SECRET.', { status: 500 });
   }
-  if (!code || !workspaceId) return new Response('Missing code or workspace reference from Jira.', { status: 400 });
+  if (!code || !state) return new Response('Missing OAuth code or state.', { status: 400 });
+
+  let oauthState;
+  try { oauthState = await consumeOAuthState(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, state, 'jira'); }
+  catch (err) { return new Response(err instanceof Error ? err.message : 'Invalid OAuth session.', { status: 400 }); }
+  const workspaceId = oauthState.workspace_id;
 
   const redirectUri = `${SUPABASE_URL}/functions/v1/jira-oauth-callback`;
   const tokenRes = await fetch('https://auth.atlassian.com/oauth/token', {

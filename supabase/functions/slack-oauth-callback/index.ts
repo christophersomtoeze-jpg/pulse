@@ -14,6 +14,7 @@
 // Also set VITE_SLACK_CLIENT_ID in your frontend .env to the same client ID.
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
+import { consumeOAuthState } from '../_shared/oauthState.ts';
 
 const SLACK_CLIENT_ID = Deno.env.get('SLACK_CLIENT_ID');
 const SLACK_CLIENT_SECRET = Deno.env.get('SLACK_CLIENT_SECRET');
@@ -23,12 +24,17 @@ const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 Deno.serve(async (req) => {
   const url = new URL(req.url);
   const code = url.searchParams.get('code');
-  const workspaceId = url.searchParams.get('state'); // we passed workspaceId as `state` when building the authorize URL
+  const state = url.searchParams.get('state'); // we passed workspaceId as `state` when building the authorize URL
 
   if (!SLACK_CLIENT_ID || !SLACK_CLIENT_SECRET) {
     return new Response('Slack is not connected yet — set SLACK_CLIENT_ID and SLACK_CLIENT_SECRET.', { status: 500 });
   }
-  if (!code || !workspaceId) return new Response('Missing code or workspace reference from Slack.', { status: 400 });
+  if (!code || !state) return new Response('Missing OAuth code or state.', { status: 400 });
+
+  let oauthState;
+  try { oauthState = await consumeOAuthState(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, state, 'slack'); }
+  catch (err) { return new Response(err instanceof Error ? err.message : 'Invalid OAuth session.', { status: 400 }); }
+  const workspaceId = oauthState.workspace_id;
 
   const tokenRes = await fetch('https://slack.com/api/oauth.v2.access', {
     method: 'POST',

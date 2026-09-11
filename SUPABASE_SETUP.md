@@ -218,3 +218,11 @@ Before either: open `capacitor.config.ts` and change the `server.url` to your re
 - A Mac for the iOS build specifically (Apple requires this — no way around it)
 
 I can't run Xcode or Android Studio from here to test a build myself — this is real, correct Capacitor configuration, but treat the first build on your machine as the actual verification step, the same way `npm run build` has been your safety net every round.
+
+## Production security hardening
+
+The current build uses a one-time `oauth_states` record for Slack, Google, Microsoft 365 and Jira OAuth. Run the **Production security hardening** section at the bottom of `schema.sql` once. Deploy the new `oauth-start` and `disconnect-integration` Edge Functions.
+
+OAuth client IDs/secrets are now server-side for these connection flows. Keep `*_CLIENT_SECRET` values and the Supabase service-role key in Supabase Edge Function secrets only; never put them in `.env` committed to Git.
+
+The browser no longer needs read/update privileges for provider access/refresh tokens. Integration status can still be read normally because the app only requests non-secret columns.

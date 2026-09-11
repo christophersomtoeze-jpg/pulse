@@ -16,6 +16,7 @@
 // consent. Set VITE_MICROSOFT_CLIENT_ID in your frontend env.
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
+import { consumeOAuthState } from '../_shared/oauthState.ts';
 
 const MICROSOFT_CLIENT_ID = Deno.env.get('MICROSOFT_CLIENT_ID');
 const MICROSOFT_CLIENT_SECRET = Deno.env.get('MICROSOFT_CLIENT_SECRET');
@@ -25,12 +26,17 @@ const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 Deno.serve(async (req) => {
   const url = new URL(req.url);
   const code = url.searchParams.get('code');
-  const workspaceId = url.searchParams.get('state');
+  const state = url.searchParams.get('state');
 
   if (!MICROSOFT_CLIENT_ID || !MICROSOFT_CLIENT_SECRET) {
     return new Response('Microsoft is not connected yet — set MICROSOFT_CLIENT_ID and MICROSOFT_CLIENT_SECRET.', { status: 500 });
   }
-  if (!code || !workspaceId) return new Response('Missing code or workspace reference from Microsoft.', { status: 400 });
+  if (!code || !state) return new Response('Missing OAuth code or state.', { status: 400 });
+
+  let oauthState;
+  try { oauthState = await consumeOAuthState(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, state, 'microsoft365'); }
+  catch (err) { return new Response(err instanceof Error ? err.message : 'Invalid OAuth session.', { status: 400 }); }
+  const workspaceId = oauthState.workspace_id;
 
   const redirectUri = `${SUPABASE_URL}/functions/v1/microsoft-oauth-callback`;
   const tokenRes = await fetch('https://login.microsoftonline.com/common/oauth2/v2.0/token', {

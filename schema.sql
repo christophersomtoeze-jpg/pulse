@@ -1255,3 +1255,39 @@ end; $$;
 
 grant execute on function public.run_workspace_automations(uuid) to authenticated;
 grant execute on function public.seed_automation_rules(uuid) to authenticated;
+
+-- ============================================================================
+-- Production security hardening: one-time OAuth state + protected integration secrets
+-- ============================================================================
+create table if not exists public.oauth_states (
+  state uuid primary key,
+  workspace_id uuid not null references public.workspaces(id) on delete cascade,
+  provider text not null check (provider in ('slack', 'google', 'microsoft365', 'jira')),
+  created_by uuid not null references auth.users(id) on delete cascade,
+  expires_at timestamptz not null,
+  created_at timestamptz not null default now()
+);
+alter table public.oauth_states enable row level security;
+revoke all on public.oauth_states from anon, authenticated;
+create index if not exists oauth_states_expiry_idx on public.oauth_states(expires_at);
+
+-- Browser clients never need to read provider credentials. Disconnects now happen
+-- through a server-side Edge Function, so the client does not need UPDATE access
+-- to secret token columns.
+revoke select (access_token, refresh_token, expires_at) on public.workspace_integrations from anon, authenticated;
+revoke update (access_token, refresh_token, expires_at, metadata, connected_by) on public.workspace_integrations from anon, authenticated;
+
+-- Clean up abandoned OAuth sessions periodically. This is safe to run from a scheduled job.
+create or replace function public.cleanup_expired_oauth_states() returns integer
+language plpgsql security definer set search_path = public as $$
+declare deleted_count integer;
+begin
+  delete from public.oauth_states where expires_at < now();
+  get diagnostics deleted_count = row_count;
+  return deleted_count;
+end;
+$$;
+revoke all on function public.cleanup_expired_oauth_states() from public;
+grant execute on function public.cleanup_expired_oauth_states() to service_role;
+
+notify pgrst, 'reload schema';
