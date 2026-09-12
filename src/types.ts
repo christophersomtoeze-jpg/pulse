@@ -380,7 +380,9 @@ export interface WorkspaceUsage {
   decisionsMade: number;
   pollsCreated: number;
   aiAnalysesRun: number;
+  automationsRun: number;
 }
+
 
 // ---- Push, API keys, webhooks, retention ----
 export interface ApiKeySummary {

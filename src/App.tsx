@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { FolderOpen, Send, Sparkles, Users, X } from 'lucide-react';
 import { AuthProvider, useAuth } from '@/auth/AuthProvider';
@@ -37,6 +37,9 @@ import { OnboardingChecklist } from '@/components/home/OnboardingChecklist';
 import { PlatformMetricsView } from '@/components/views/PlatformMetricsView';
 import { TermsPage } from '@/components/legal/TermsPage';
 import { PrivacyPage } from '@/components/legal/PrivacyPage';
+import { PlanGate } from '@/components/settings/PlanGate';
+import { getWorkspaceSubscription } from '@/lib/pulseApi';
+import { planAllows, type PaidFeature } from '@/lib/planEntitlements';
 import type { AppView } from '@/lib/viewTypes';
 import { activePolls as demoPolls, topicNodes as demoTopics } from '@/data';
 import {
@@ -145,6 +148,7 @@ function AppShell() {
   const [language, setLanguage] = useState('en');
   const [dashboard, setDashboard] = useState<DashboardData>({ waitingForYou: [], decidedByYou: [], upcomingDeadlines: [], teamActivity: [] });
   const [actions, setActions] = useState<WorkspaceAction[]>([]);
+  const [subscriptionPlan, setSubscriptionPlan] = useState<import('@/types').SubscriptionPlan>('free');
 
   const [view, setView] = useState<AppView>('dashboard');
   const [navOpen, setNavOpen] = useState(false);
@@ -192,6 +196,8 @@ function AppShell() {
     setMembers(m);
     setAiEnabled(general?.aiEnabled ?? true);
     setLanguage(general?.defaultLanguage ?? 'en');
+    const subscription = await getWorkspaceSubscription(ws.id).catch(() => null);
+    setSubscriptionPlan(subscription?.plan ?? 'free');
     await refreshWorkspaceData(ws.id);
   }, [refreshWorkspaceData]);
 
@@ -281,6 +287,9 @@ function AppShell() {
   const badges = { actions: myOpenActionCount, risks: riskCount, notifications: dashboard.teamActivity.length, invitations: pendingInviteCount };
   const isAdmin = members.some((m) => m.userId === user?.id && (m.role === 'owner' || m.role === 'admin'));
   const workspaceRole = members.find((m) => m.userId === user?.id)?.role ?? 'member';
+
+  const gatedView = (feature: PaidFeature, content: ReactNode, title?: string, description?: string) =>
+    planAllows(subscriptionPlan, feature) ? content : <PlanGate plan={subscriptionPlan} feature={feature} title={title} description={description} onBilling={() => setView('settings')} />;
 
   return (
     <I18nProvider language={language}>
@@ -383,21 +392,21 @@ function AppShell() {
         {view === 'resources' && !workspace && <ComingSoonView icon={FolderOpen} phase="Connect Supabase" title="Resources need a workspace" description="Sign in and create a workspace to store real resources." />}
         {view === 'actions' && workspace && <ActionsView workspaceId={workspace.id} members={members} />}
         {view === 'actions' && !workspace && <ComingSoonView icon={Sparkles} phase="Connect Supabase" title="Actions need a workspace" description="Sign in and create a workspace to create and track real actions." />}
-        {view === 'pulse-ai' && workspace && <PulseAIView workspaceId={workspace.id} aiEnabled={aiEnabled} />}
+        {view === 'pulse-ai' && workspace && gatedView('decision-intelligence', <PulseAIView workspaceId={workspace.id} aiEnabled={aiEnabled} />, 'PULSE AI intelligence', 'Advanced PULSE AI workspace intelligence is included with Pro.')}
         {view === 'pulse-ai' && !workspace && <ComingSoonView icon={Sparkles} phase="Connect Supabase" title="PULSE AI needs a workspace" description="Sign in and create a workspace, then deploy the pulse-assistant function." />}
-        {view === 'risks' && workspace && <RiskCenterView workspaceId={workspace.id} onNavigate={setView} onOpenDecision={openDecision} />}
+        {view === 'risks' && workspace && gatedView('risk-center', <RiskCenterView workspaceId={workspace.id} onNavigate={setView} onOpenDecision={openDecision} />, 'Risk Center', 'Risk signals and execution warnings are included with Pro.')}
         {view === 'risks' && !workspace && <ComingSoonView icon={Sparkles} phase="Connect Supabase" title="Risk Center needs a workspace" description="Risk detection runs against your real discussions, votes, and actions." />}
-        {view === 'analytics' && workspace && <AnalyticsView workspaceId={workspace.id} />}
-        {view === 'memory' && workspace && <MemoryView workspaceId={workspace.id} onOpenDecision={openDecision} />}
+        {view === 'analytics' && workspace && gatedView('analytics', <AnalyticsView workspaceId={workspace.id} />, 'Decision analytics', 'Workspace analytics are included with Pro.')}
+        {view === 'memory' && workspace && gatedView('memory', <MemoryView workspaceId={workspace.id} onOpenDecision={openDecision} />, 'Organizational Memory', 'Decision memory and historical reasoning are included with Pro.')}
         {view === 'analytics' && !workspace && <ComingSoonView icon={Sparkles} phase="Connect Supabase" title="Analytics needs a workspace" description="Every number here is computed from your real workspace activity." />}
         {view === 'memory' && !workspace && <ComingSoonView icon={Sparkles} phase="Connect Supabase" title="Memory needs a workspace" description="PULSE Memory preserves the history and reasoning behind real workspace decisions." />}
-        {view === 'meeting-summaries' && workspace && <MeetingSummariesView workspaceId={workspace.id} aiEnabled={aiEnabled} />}
+        {view === 'meeting-summaries' && workspace && gatedView('meeting-summaries', <MeetingSummariesView workspaceId={workspace.id} aiEnabled={aiEnabled} />, 'Meeting Summaries', 'AI meeting summaries are included with Pro.')}
         {view === 'meeting-summaries' && !workspace && <ComingSoonView icon={Sparkles} phase="Connect Supabase" title="Meeting Summaries need a workspace" description="Sign in and create a workspace, then deploy the meeting-summary function." />}
         {view === 'team' && workspace && <TeamView workspaceId={workspace.id} />}
         {view === 'notifications' && <NotificationsView activity={dashboard.teamActivity} />}
-        {view === 'automation' && workspace && <AutomationView workspaceId={workspace.id} />}
+        {view === 'automation' && workspace && gatedView('automation', <AutomationView workspaceId={workspace.id} />, 'Automation Center', 'Workspace automations are included with Pro.')}
         {view === 'invitations' && workspace && <InvitationsView workspaceId={workspace.id} />}
-        {view === 'audit-log' && workspace && <AuditLogView workspaceId={workspace.id} />}
+        {view === 'audit-log' && workspace && gatedView('audit-log', <AuditLogView workspaceId={workspace.id} />, 'Audit Log', 'Governance-grade audit history is included with Business.')}
         {view === 'audit-log' && !workspace && <ComingSoonView icon={Sparkles} phase="Connect Supabase" title="Audit Log needs a workspace" description="Every role change, invite, and decision outcome is logged automatically once you're connected." />}
         {view === 'settings' && workspace && (
           <SettingsHub
@@ -406,11 +415,12 @@ function AppShell() {
             workspaceRole={workspaceRole}
             isAdmin={isAdmin}
             isOwner={workspaceRole === 'owner'}
+            subscriptionPlan={subscriptionPlan}
             onNavigateApp={setView}
             onWorkspaceRenamed={(name, defaultLanguage) => { setWorkspace((w) => (w ? { ...w, name } : w)); setLanguage(defaultLanguage); }}
           />
         )}
-        {view === 'integrations' && workspace && <IntegrationsView workspaceId={workspace.id} isAdmin={isAdmin} />}
+        {view === 'integrations' && workspace && gatedView('integrations', <IntegrationsView workspaceId={workspace.id} isAdmin={isAdmin} />, 'Integrations', 'Connect your work tools with Pro.')}
         {view === 'integrations' && !workspace && <ComingSoonView icon={Sparkles} phase="Connect Supabase" title="Integrations need a workspace" description="Connect Slack and the rest once you're signed into a real workspace." />}
         {view === 'help' && <HelpView onOpenShortcuts={() => setShowShortcuts(true)} />}
 

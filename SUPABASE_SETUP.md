@@ -257,3 +257,24 @@ Listen for:
 - `customer.subscription.deleted`
 
 Before taking real payments, configure the Stripe Billing Portal and verify the webhook with Stripe test mode.
+
+## Subscription enforcement 1.0
+
+The app now has plan-aware feature gates and usage meters. Apply the migration:
+`supabase/migrations/20260912_subscription_entitlements.sql`
+
+It adds two authenticated RPCs:
+- `workspace_plan(workspace_id)` — returns the effective plan (`free`, `pro`, `business`, `enterprise`).
+- `workspace_plan_allows(workspace_id, feature)` — checks whether the workspace plan includes a named feature.
+
+Current feature tiers:
+- Pro: Decision Intelligence, Analytics, Risk Center, Memory, Automation, Integrations, Meeting Summaries.
+- Business: Audit Log, API Keys, Single Sign-On.
+
+Current workspace usage limits shown by the product:
+- Free: 5 members, 20 AI analyses, 0 automation runs.
+- Pro: 25 members, 500 AI analyses, 25 automation runs.
+- Business: 250 members, 5,000 AI analyses, 250 automation runs.
+- Enterprise: unlimited for these three meters.
+
+The visual gates are intentionally friendly and send users to Plan & Billing. The RPC is the server-safe foundation for the next enforcement pass, where metered Edge Functions will reject over-limit work before it is executed.

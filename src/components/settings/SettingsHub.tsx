@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import {
   BarChart3, Bell, Building2, ChevronLeft, ChevronRight, CreditCard, HelpCircle,
   History, KeyRound, Lock, Plug, ShieldCheck, Sparkles, Terminal, User, Users,
@@ -15,6 +15,9 @@ import { DataPrivacyPanel } from './DataPrivacyPanel';
 import { BillingPanel } from './BillingPanel';
 import { ApiKeysPanel } from './ApiKeysPanel';
 import { SsoPanel } from './SsoPanel';
+import { PlanGate } from './PlanGate';
+import { planAllows, type PaidFeature } from '@/lib/planEntitlements';
+import type { SubscriptionPlan } from '@/types';
 
 type ItemId =
   | 'profile' | 'security' | 'appearance'
@@ -59,11 +62,12 @@ interface SettingsHubProps {
   workspaceRole: string;
   isAdmin: boolean;
   isOwner: boolean;
+  subscriptionPlan: SubscriptionPlan;
   onNavigateApp: (view: AppView) => void;
   onWorkspaceRenamed: (name: string, defaultLanguage: string) => void;
 }
 
-export function SettingsHub({ workspaceId, workspaceName, workspaceRole, isAdmin, isOwner, onNavigateApp, onWorkspaceRenamed }: SettingsHubProps) {
+export function SettingsHub({ workspaceId, workspaceName, workspaceRole, isAdmin, isOwner, subscriptionPlan, onNavigateApp, onWorkspaceRenamed }: SettingsHubProps) {
   const [active, setActive] = useState<ItemId | null>(null);
 
   const select = (item: NavItem) => {
@@ -72,6 +76,9 @@ export function SettingsHub({ workspaceId, workspaceName, workspaceRole, isAdmin
   };
 
   const activeLabel = categories.flatMap((c) => c.items).find((i) => i.id === active)?.label;
+
+  const gated = (feature: PaidFeature, content: ReactNode, title: string, description: string) =>
+    planAllows(subscriptionPlan, feature) ? content : <PlanGate plan={subscriptionPlan} feature={feature} title={title} description={description} onBilling={() => setActive('billing')} />;
 
   const renderPanel = () => {
     switch (active) {
@@ -83,8 +90,8 @@ export function SettingsHub({ workspaceId, workspaceName, workspaceRole, isAdmin
       case 'ai-settings': return <AISettingsPanel workspaceId={workspaceId} isAdmin={isAdmin} />;
       case 'usage': return <UsagePanel workspaceId={workspaceId} />;
       case 'data-privacy': return <DataPrivacyPanel workspaceId={workspaceId} workspaceName={workspaceName} isOwner={isOwner} />;
-      case 'api-keys': return <ApiKeysPanel workspaceId={workspaceId} isAdmin={isAdmin} />;
-      case 'sso': return <SsoPanel workspaceId={workspaceId} isOwner={isOwner} />;
+      case 'api-keys': return gated('api-keys', <ApiKeysPanel workspaceId={workspaceId} isAdmin={isAdmin} />, 'API Keys', 'Developer API access is included with Business.');
+      case 'sso': return gated('sso', <SsoPanel workspaceId={workspaceId} isOwner={isOwner} />, 'Single Sign-On', 'SSO and enterprise identity controls are included with Business.');
       case 'billing': return <BillingPanel workspaceId={workspaceId} isAdmin={isAdmin} />;
       default: return null;
     }

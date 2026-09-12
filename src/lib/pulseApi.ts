@@ -1717,7 +1717,7 @@ export async function deleteWorkspace(workspaceId: string) {
 }
 
 export async function getWorkspaceUsage(workspaceId: string): Promise<WorkspaceUsage> {
-  const empty: WorkspaceUsage = { activeMembers: 0, discussionsCreated: 0, decisionsMade: 0, pollsCreated: 0, aiAnalysesRun: 0 };
+  const empty: WorkspaceUsage = { activeMembers: 0, discussionsCreated: 0, decisionsMade: 0, pollsCreated: 0, aiAnalysesRun: 0, automationsRun: 0 };
   if (!supabase) return empty;
   const [members, discussions, decisions, polls, ai] = await Promise.all([
     supabase.from('workspace_members').select('*', { count: 'exact', head: true }).eq('workspace_id', workspaceId),
@@ -1726,9 +1726,10 @@ export async function getWorkspaceUsage(workspaceId: string): Promise<WorkspaceU
     supabase.from('polls').select('*', { count: 'exact', head: true }).eq('workspace_id', workspaceId),
     supabase.from('decision_ai_analyses').select('id,decisions!inner(workspace_id)', { count: 'exact', head: true }).eq('decisions.workspace_id', workspaceId),
   ]);
+  const automationCount = await supabase.from('automation_runs').select('*', { count: 'exact', head: true }).eq('workspace_id', workspaceId);
   return {
     activeMembers: members.count ?? 0, discussionsCreated: discussions.count ?? 0, decisionsMade: decisions.count ?? 0,
-    pollsCreated: polls.count ?? 0, aiAnalysesRun: ai.count ?? 0,
+    pollsCreated: polls.count ?? 0, aiAnalysesRun: ai.count ?? 0, automationsRun: automationCount.count ?? 0,
   };
 }
 
