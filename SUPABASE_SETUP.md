@@ -226,3 +226,34 @@ The current build uses a one-time `oauth_states` record for Slack, Google, Micro
 OAuth client IDs/secrets are now server-side for these connection flows. Keep `*_CLIENT_SECRET` values and the Supabase service-role key in Supabase Edge Function secrets only; never put them in `.env` committed to Git.
 
 The browser no longer needs read/update privileges for provider access/refresh tokens. Integration status can still be read normally because the app only requests non-secret columns.
+
+
+## Billing 2.0 — Stripe setup
+
+The app now includes secure Checkout and Billing Portal Edge Functions.
+
+Set these Supabase Edge Function secrets (never put them in `.env` or the browser):
+- `STRIPE_SECRET_KEY`
+- `STRIPE_PRICE_PRO`
+- `STRIPE_PRICE_BUSINESS`
+- `STRIPE_WEBHOOK_SECRET`
+- `APP_URL` (recommended, e.g. your production Render URL)
+- `SUPABASE_SERVICE_ROLE_KEY` (normally already available to Edge Functions)
+
+Deploy:
+```powershell
+supabase functions deploy stripe-checkout
+supabase functions deploy stripe-billing-portal
+supabase functions deploy stripe-webhook --no-verify-jwt
+```
+
+In Stripe, create Products/Prices for Pro and Business and use the corresponding Price IDs. Create a webhook endpoint:
+`https://<project-ref>.supabase.co/functions/v1/stripe-webhook`
+
+Listen for:
+- `checkout.session.completed`
+- `customer.subscription.created`
+- `customer.subscription.updated`
+- `customer.subscription.deleted`
+
+Before taking real payments, configure the Stripe Billing Portal and verify the webhook with Stripe test mode.

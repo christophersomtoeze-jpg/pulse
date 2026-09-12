@@ -1397,6 +1397,13 @@ export async function startCheckout(workspaceId: string, plan: 'pro' | 'business
   return { url: data?.url ?? null, error: data?.error ?? null };
 }
 
+export async function openBillingPortal(workspaceId: string): Promise<{ url: string | null; error: string | null }> {
+  if (!supabase) return { url: null, error: 'Supabase is not configured.' };
+  const { data, error } = await supabase.functions.invoke('stripe-billing-portal', { body: { workspaceId } });
+  if (error) return { url: null, error: error.message };
+  return { url: data?.url ?? null, error: data?.error ?? null };
+}
+
 // ============================================================================
 // Phase 6: Integrations
 // ============================================================================
