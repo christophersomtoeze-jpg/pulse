@@ -1036,6 +1036,12 @@ export async function deleteActionDependency(dependencyId: string) {
   if (error) throw new Error(error.message);
 }
 
+export async function updateActionOwner(actionId: string, ownerId: string | null) {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const { error } = await supabase.from('actions').update({ owner_id: ownerId, updated_at: new Date().toISOString() }).eq('id', actionId);
+  if (error) throw new Error(error.message);
+}
+
 export async function updateActionStatus(actionId: string, status: ActionStatus) {
   if (!supabase) throw new Error('Supabase is not configured.');
   const { error } = await supabase.from('actions').update({ status, updated_at: new Date().toISOString() }).eq('id', actionId);
