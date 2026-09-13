@@ -2,7 +2,7 @@ import type {
   ActivePoll, FeedMessage, PinnedDecision, TopicNode,
   DecisionAIAnalysis, DecisionComment, DecisionHistoryEntry,
   DecisionOutcome, DecisionResource, DecisionSummary, DecisionVoteTally, VoteChoice,
-  WorkspaceAction, ActionStatus, ActionPriority, GlobalSearchResults,
+  WorkspaceAction, ActionStatus, ActionPriority, ActionDependency, GlobalSearchResults,
   AssistantMessage, MeetingSummary, RiskItem, WorkspaceListItem, AuditLogEntry,
   AnalyticsSnapshot, SmartSearchResult, WorkspaceSubscription, WorkspaceIntegration, IntegrationProvider, PlatformMetrics,
   ProfileDetails, NotificationPreferences, LoginHistoryEntry, WorkspaceGeneralSettings, WorkspaceUsage,
@@ -1006,6 +1006,26 @@ export async function createAction(workspaceId: string, input: CreateActionInput
     await notifyActionAssigned(created.ownerId, created.title, ws?.name ?? 'your workspace');
   }
   return created;
+}
+
+export async function listActionDependencies(workspaceId: string): Promise<ActionDependency[]> {
+  if (!supabase) return [];
+  const { data, error } = await supabase.from('action_dependencies').select('id,workspace_id,action_id,depends_on_action_id,created_by,created_at').eq('workspace_id', workspaceId);
+  if (error) throw new Error(error.message);
+  return (data ?? []).map((r) => ({ id: r.id, workspaceId: r.workspace_id, actionId: r.action_id, dependsOnActionId: r.depends_on_action_id, createdBy: r.created_by, createdAt: r.created_at }));
+}
+
+export async function createActionDependency(workspaceId: string, actionId: string, dependsOnActionId: string, createdBy: string): Promise<ActionDependency> {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const { data, error } = await supabase.from('action_dependencies').insert({ workspace_id: workspaceId, action_id: actionId, depends_on_action_id: dependsOnActionId, created_by: createdBy }).select('id,workspace_id,action_id,depends_on_action_id,created_by,created_at').single();
+  if (error) throw new Error(error.message);
+  return { id: data.id, workspaceId: data.workspace_id, actionId: data.action_id, dependsOnActionId: data.depends_on_action_id, createdBy: data.created_by, createdAt: data.created_at };
+}
+
+export async function deleteActionDependency(dependencyId: string) {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const { error } = await supabase.from('action_dependencies').delete().eq('id', dependencyId);
+  if (error) throw new Error(error.message);
 }
 
 export async function updateActionStatus(actionId: string, status: ActionStatus) {

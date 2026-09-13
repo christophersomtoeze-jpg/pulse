@@ -1,7 +1,7 @@
-import { useMemo, useState } from 'react';
-import { ArrowRight, CheckCircle2, Circle, Clock3, Plus, Sparkles, Target } from 'lucide-react';
-import { createAction, updateActionStatus, type WorkspaceMember } from '@/lib/pulseApi';
-import type { DecisionIntelligence, DecisionSummary, WorkspaceAction, ActionPriority, ActionStatus } from '@/types';
+import { useEffect, useMemo, useState } from 'react';
+import { ArrowRight, CheckCircle2, Circle, Clock3, Plus, Sparkles, Target, Link2, AlertTriangle, X } from 'lucide-react';
+import { createAction, updateActionStatus, createActionDependency, deleteActionDependency, listActionDependencies, type WorkspaceMember } from '@/lib/pulseApi';
+import type { ActionDependency, DecisionIntelligence, DecisionSummary, WorkspaceAction, ActionPriority, ActionStatus } from '@/types';
 
 interface Props {
   decision: DecisionSummary;
@@ -19,10 +19,22 @@ export function DecisionExecutionEngine({ decision, actions, intelligence, membe
   const [creating, setCreating] = useState(false);
   const [ownerId, setOwnerId] = useState(decision.ownerId ?? '');
   const [priority, setPriority] = useState<ActionPriority>('medium');
+  const [dependencies, setDependencies] = useState<ActionDependency[]>([]);
+  const [dependencyTarget, setDependencyTarget] = useState('');
+  const [dependencyBlocker, setDependencyBlocker] = useState('');
+  const [dependencyBusy, setDependencyBusy] = useState(false);
 
   const open = actions.filter((a) => a.status !== 'done');
   const done = actions.filter((a) => a.status === 'done').length;
   const progress = actions.length ? Math.round((done / actions.length) * 100) : 0;
+  useEffect(() => {
+    let cancelled = false;
+    listActionDependencies(decision.workspaceId).then((rows) => { if (!cancelled) setDependencies(rows.filter((d) => actions.some((a) => a.id === d.actionId || a.id === d.dependsOnActionId))); }).catch(() => { if (!cancelled) setDependencies([]); });
+    return () => { cancelled = true; };
+  }, [decision.workspaceId, actions]);
+
+  const blocked = useMemo(() => actions.filter((a) => a.status !== 'done' && dependencies.some((d) => d.actionId === a.id && actions.find((b) => b.id === d.dependsOnActionId)?.status !== 'done')), [actions, dependencies]);
+  const ready = open.filter((a) => !blocked.some((b) => b.id === a.id));
   const suggestions = useMemo(() => {
     const existing = new Set(actions.map((a) => a.title.trim().toLowerCase()));
     return (intelligence?.nextActions ?? []).filter((a) => a.trim() && !existing.has(a.trim().toLowerCase())).slice(0, 6);
@@ -49,6 +61,18 @@ export function DecisionExecutionEngine({ decision, actions, intelligence, membe
     try { for (const title of suggestions) await add(title); } finally { setCreating(false); }
   };
 
+  const addDependency = async () => {
+    if (!dependencyTarget || !dependencyBlocker || dependencyTarget === dependencyBlocker) return;
+    setDependencyBusy(true);
+    try {
+      await createActionDependency(decision.workspaceId, dependencyTarget, dependencyBlocker, userId);
+      setDependencies(await listActionDependencies(decision.workspaceId));
+      setDependencyTarget(''); setDependencyBlocker('');
+    } finally { setDependencyBusy(false); }
+  };
+
+  const removeDependency = async (id: string) => { setDependencyBusy(true); try { await deleteActionDependency(id); setDependencies((prev) => prev.filter((d) => d.id !== id)); } finally { setDependencyBusy(false); } };
+
   const cycle = async (action: WorkspaceAction) => {
     setBusy(action.id);
     try { await updateActionStatus(action.id, nextStatus[action.status]); onChanged(); } finally { setBusy(null); }
@@ -66,7 +90,7 @@ export function DecisionExecutionEngine({ decision, actions, intelligence, membe
       </div>
 
       <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/5"><div className="h-full rounded-full bg-pulse-400 transition-all" style={{ width: `${progress}%` }} /></div>
-      <div className="mt-2 flex flex-wrap gap-3 text-[10px] text-ink-500"><span>{done} done</span><span>{open.length} open</span>{decision.deadline && <span className="flex items-center gap-1"><Clock3 className="h-3 w-3" /> Decision due {new Date(decision.deadline).toLocaleDateString()}</span>}</div>
+      <div className="mt-2 flex flex-wrap gap-3 text-[10px] text-ink-500"><span>{done} done</span><span>{open.length} open</span><span>{ready.length} ready</span>{blocked.length > 0 && <span className="text-alert-300">{blocked.length} blocked</span>}{decision.deadline && <span className="flex items-center gap-1"><Clock3 className="h-3 w-3" /> Decision due {new Date(decision.deadline).toLocaleDateString()}</span>}</div>
 
       {suggestions.length > 0 && (
         <div className="mt-4 rounded-xl border border-pulse-500/15 bg-pulse-500/[.04] p-3">
@@ -81,6 +105,19 @@ export function DecisionExecutionEngine({ decision, actions, intelligence, membe
         <select value={ownerId} onChange={(e) => setOwnerId(e.target.value)} className="field text-xs"><option value="">Use decision owner / unassigned</option>{members.map((m) => <option key={m.userId} value={m.userId}>{m.name || m.email}</option>)}</select>
         <select value={priority} onChange={(e) => setPriority(e.target.value as ActionPriority)} className="field text-xs"><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select>
       </div>
+
+      {actions.length > 1 && (
+        <div className="mt-4 rounded-xl border border-white/5 bg-white/[.02] p-3">
+          <p className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-ink-400"><Link2 className="h-3 w-3" /> Action dependencies</p>
+          <div className="mt-2 grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
+            <select value={dependencyTarget} onChange={(e) => setDependencyTarget(e.target.value)} className="field text-xs"><option value="">Action that is waiting…</option>{actions.map((a) => <option key={a.id} value={a.id}>{a.title}</option>)}</select>
+            <select value={dependencyBlocker} onChange={(e) => setDependencyBlocker(e.target.value)} className="field text-xs"><option value="">Blocked by…</option>{actions.filter((a) => a.id !== dependencyTarget).map((a) => <option key={a.id} value={a.id}>{a.title}</option>)}</select>
+            <button onClick={addDependency} disabled={dependencyBusy || !dependencyTarget || !dependencyBlocker} className="secondary-btn justify-center disabled:opacity-40">{dependencyBusy ? 'Saving…' : 'Link'}</button>
+          </div>
+          {blocked.length > 0 && <div className="mt-3 rounded-lg border border-alert-500/20 bg-alert-500/[.04] p-2.5"><p className="flex items-center gap-1 text-[10px] font-semibold text-alert-300"><AlertTriangle className="h-3 w-3" /> Execution bottleneck</p><p className="mt-1 text-[10px] text-ink-500">Finish the blocking action before these steps can be considered ready.</p></div>}
+          {dependencies.length > 0 && <div className="mt-2 space-y-1">{dependencies.map((d) => { const target = actions.find((a) => a.id === d.actionId); const blocker = actions.find((a) => a.id === d.dependsOnActionId); return <div key={d.id} className="flex items-center gap-2 rounded-lg border border-white/5 px-2.5 py-1.5 text-[10px]"><span className="min-w-0 flex-1 truncate">{target?.title ?? 'Action'} <span className="text-ink-600">depends on</span> {blocker?.title ?? 'Action'}</span><button onClick={() => removeDependency(d.id)} disabled={dependencyBusy} className="text-ink-600 hover:text-ink-300"><X className="h-3 w-3" /></button></div>; })}</div>}
+        </div>
+      )}
 
       <div className="mt-3 space-y-1.5">
         {actions.map((a) => <button key={a.id} onClick={() => cycle(a)} disabled={busy === a.id} className="flex w-full items-center gap-2 rounded-xl border border-white/5 bg-white/[.02] px-3 py-2 text-left hover:border-pulse-500/20 disabled:opacity-50">
