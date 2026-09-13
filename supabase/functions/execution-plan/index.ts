@@ -31,6 +31,9 @@ Deno.serve(async (req) => {
     const { data: decision, error } = await caller.from('decisions').select('id,workspace_id,title,description,status,outcome,deadline,owner_id,created_at,decided_at,decision_gate').eq('id', decisionId).maybeSingle();
     if (error) return json({ error: error.message }, 400);
     if (!decision) return json({ error: 'Decision not found or access denied' }, 404);
+    const { data: quota, error: quotaError } = await caller.rpc('consume_workspace_usage', { p_workspace_id: decision.workspace_id, p_metric: 'ai_analyses' });
+    if (quotaError) return json({ error: quotaError.message }, 400);
+    if (!quota?.allowed) return json({ error: quota?.reason ?? 'AI usage limit reached for this workspace.', quota }, 429);
     const [actions, comments, resources, votes] = await Promise.all([
       caller.from('actions').select('title,status,priority,deadline,owner_id').eq('decision_id', decisionId).limit(40),
       caller.from('decision_comments').select('body,created_at').eq('decision_id', decisionId).order('created_at', { ascending: true }).limit(50),

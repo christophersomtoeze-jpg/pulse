@@ -1609,3 +1609,17 @@ create policy action_dependencies_delete_member on public.action_dependencies fo
 do $$ begin
   alter publication supabase_realtime add table public.action_dependencies;
 exception when duplicate_object then null; end $$;
+
+-- PULSE Server Usage Enforcement 1.0
+-- See supabase/migrations/20260914_server_usage_enforcement.sql for details.
+create table if not exists public.workspace_usage_events (
+  id uuid primary key default gen_random_uuid(), workspace_id uuid not null references public.workspaces(id) on delete cascade,
+  metric text not null check (metric in ('ai_analyses','automations')), actor_id uuid references auth.users(id) on delete set null,
+  idempotency_key text, created_at timestamptz not null default now()
+);
+create index if not exists workspace_usage_events_workspace_metric_created_idx on public.workspace_usage_events(workspace_id, metric, created_at desc);
+create unique index if not exists workspace_usage_events_idempotency_idx on public.workspace_usage_events(workspace_id, metric, idempotency_key) where idempotency_key is not null;
+alter table public.workspace_usage_events enable row level security;
+drop policy if exists workspace_usage_events_select_member on public.workspace_usage_events;
+create policy workspace_usage_events_select_member on public.workspace_usage_events for select to authenticated using (public.is_workspace_member(workspace_id));
+-- The full server-side RPC/trigger definitions live in the migration above and should be applied to Supabase.

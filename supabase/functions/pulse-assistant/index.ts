@@ -41,6 +41,13 @@ Deno.serve(async (req) => {
     if (userError || !userData?.user) return json({ error: 'Not authenticated' }, 401);
     const userId = userData.user.id;
 
+    const { data: quota, error: quotaError } = await callerClient.rpc('consume_workspace_usage', {
+      p_workspace_id: workspaceId,
+      p_metric: 'ai_analyses',
+    });
+    if (quotaError) return json({ error: quotaError.message }, 400);
+    if (!quota?.allowed) return json({ error: quota?.reason ?? 'AI usage limit reached for this workspace.', quota }, 429);
+
     // RLS on every one of these queries silently returns nothing if the
     // caller isn't actually a member of workspaceId — this fails closed.
     const [decisionsRes, discussionsRes, actionsRes] = await Promise.all([
