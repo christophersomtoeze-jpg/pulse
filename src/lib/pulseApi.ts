@@ -5,7 +5,7 @@ import type {
   WorkspaceAction, ActionStatus, ActionPriority, ActionDependency, GlobalSearchResults,
   AssistantMessage, MeetingSummary, RiskItem, WorkspaceListItem, AuditLogEntry,
   AnalyticsSnapshot, SmartSearchResult, WorkspaceSubscription, WorkspaceIntegration, IntegrationProvider, PlatformMetrics,
-  ProfileDetails, NotificationPreferences, LoginHistoryEntry, WorkspaceGeneralSettings, WorkspaceUsage,
+  ProfileDetails, NotificationPreferences, LoginHistoryEntry, WorkspaceGeneralSettings, WorkspaceUsage, WorkspaceUsageSnapshot,
   ApiKeySummary, IncomingWebhookSummary, SsoDomainSummary,
   DecisionLink, DecisionRelationshipType, DecisionOutcomeReview, OutcomeReviewType, DecisionGateAnswers,
   RecommendedDecisionProcess, DecisionReversibility, DecisionUrgency,
@@ -1756,6 +1756,31 @@ export async function deleteWorkspace(workspaceId: string) {
   if (!supabase) throw new Error('Supabase is not configured.');
   const { error } = await supabase.from('workspaces').delete().eq('id', workspaceId);
   if (error) throw new Error(error.message);
+}
+
+export async function getWorkspaceUsageSnapshot(workspaceId: string): Promise<WorkspaceUsageSnapshot> {
+  const fallback: WorkspaceUsageSnapshot = {
+    activeMembers: 0, discussionsCreated: 0, decisionsMade: 0, pollsCreated: 0,
+    aiAnalysesRun: 0, automationsRun: 0, plan: 'free', memberLimit: 5, aiAnalysesLimit: 20,
+    automationsLimit: 0, periodStart: new Date().toISOString(),
+  };
+  if (!supabase) return fallback;
+  const { data, error } = await supabase.rpc('workspace_usage_snapshot', { workspace_id_input: workspaceId });
+  if (error) throw new Error(error.message);
+  if (!data) return fallback;
+  return {
+    activeMembers: Number(data.activeMembers ?? 0),
+    discussionsCreated: Number(data.discussionsCreated ?? 0),
+    decisionsMade: Number(data.decisionsMade ?? 0),
+    pollsCreated: Number(data.pollsCreated ?? 0),
+    aiAnalysesRun: Number(data.aiAnalysesRun ?? 0),
+    automationsRun: Number(data.automationsRun ?? 0),
+    plan: data.plan ?? 'free',
+    memberLimit: data.memberLimit == null ? null : Number(data.memberLimit),
+    aiAnalysesLimit: data.aiAnalysesLimit == null ? null : Number(data.aiAnalysesLimit),
+    automationsLimit: data.automationsLimit == null ? null : Number(data.automationsLimit),
+    periodStart: data.periodStart ?? new Date().toISOString(),
+  };
 }
 
 export async function getWorkspaceUsage(workspaceId: string): Promise<WorkspaceUsage> {

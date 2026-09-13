@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import {
   BarChart3, Bell, Building2, ChevronLeft, ChevronRight, CreditCard, HelpCircle,
   History, KeyRound, Lock, Plug, ShieldCheck, Sparkles, Terminal, User, Users,
@@ -69,6 +69,12 @@ interface SettingsHubProps {
 
 export function SettingsHub({ workspaceId, workspaceName, workspaceRole, isAdmin, isOwner, subscriptionPlan, onNavigateApp, onWorkspaceRenamed }: SettingsHubProps) {
   const [active, setActive] = useState<ItemId | null>(null);
+
+  useEffect(() => {
+    const openBilling = () => setActive('billing');
+    window.addEventListener('pulse:open-billing', openBilling);
+    return () => window.removeEventListener('pulse:open-billing', openBilling);
+  }, []);
 
   const select = (item: NavItem) => {
     if (item.external) { onNavigateApp(item.external); return; }

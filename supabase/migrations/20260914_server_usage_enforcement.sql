@@ -112,6 +112,9 @@ declare
   ai_used integer;
   automation_used integer;
   member_count integer;
+  discussion_count integer;
+  decision_count integer;
+  poll_count integer;
   ai_limit integer;
   automation_limit integer;
   member_limit integer;
@@ -119,6 +122,9 @@ begin
   if not public.is_workspace_member(workspace_id_input) then raise exception 'Not authorized'; end if;
   current_plan := public.workspace_plan(workspace_id_input);
   select count(*)::integer into member_count from public.workspace_members where workspace_id=workspace_id_input;
+  select count(*)::integer into discussion_count from public.topics where workspace_id=workspace_id_input;
+  select count(*)::integer into decision_count from public.decisions where workspace_id=workspace_id_input;
+  select count(*)::integer into poll_count from public.polls where workspace_id=workspace_id_input;
   select count(*)::integer into ai_used from public.workspace_usage_events where workspace_id=workspace_id_input and metric='ai_analyses' and created_at >= date_trunc('month', now());
   select count(*)::integer into automation_used from public.workspace_usage_events where workspace_id=workspace_id_input and metric='automations' and created_at >= date_trunc('month', now());
   member_limit := case current_plan when 'free' then 5 when 'pro' then 25 when 'business' then 250 else null end;
@@ -127,6 +133,9 @@ begin
   return jsonb_build_object(
     'plan', current_plan,
     'activeMembers', member_count,
+    'discussionsCreated', discussion_count,
+    'decisionsMade', decision_count,
+    'pollsCreated', poll_count,
     'aiAnalysesRun', ai_used,
     'automationsRun', automation_used,
     'memberLimit', member_limit,

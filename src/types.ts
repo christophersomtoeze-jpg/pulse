@@ -400,6 +400,14 @@ export interface WorkspaceUsage {
   automationsRun: number;
 }
 
+export interface WorkspaceUsageSnapshot extends WorkspaceUsage {
+  plan: SubscriptionPlan;
+  memberLimit: number | null;
+  aiAnalysesLimit: number | null;
+  automationsLimit: number | null;
+  periodStart: string;
+}
+
 
 // ---- Push, API keys, webhooks, retention ----
 export interface ApiKeySummary {
