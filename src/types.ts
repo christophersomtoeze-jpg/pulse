@@ -425,3 +425,20 @@ export interface SsoDomainSummary {
   defaultRole: string;
   createdAt: string;
 }
+
+export type ExecutionInterventionKind = 'bottleneck' | 'overdue' | 'owner' | 'deadline' | 'dependency';
+export interface ExecutionIntervention {
+  kind: ExecutionInterventionKind;
+  title: string;
+  detail: string;
+  priority: ActionPriority;
+  actionId: string | null;
+  suggestedAction: string;
+}
+export interface ExecutionAutopilotAnalysis {
+  health: 'healthy' | 'at-risk' | 'critical';
+  headline: string;
+  bottlenecks: { actionId: string; reason: string; blockedCount: number }[];
+  interventions: ExecutionIntervention[];
+  confidence: number;
+}
