@@ -9,7 +9,7 @@ import type {
   ApiKeySummary, IncomingWebhookSummary, SsoDomainSummary,
   DecisionLink, DecisionRelationshipType, DecisionOutcomeReview, OutcomeReviewType, DecisionGateAnswers,
   RecommendedDecisionProcess, DecisionReversibility, DecisionUrgency,
-  DecisionIntelligence, DecisionRiskLevel,
+  DecisionIntelligence, DecisionRiskLevel, ExecutionPlanStep,
 } from '@/types';
 import { supabase } from '@/lib/supabase';
 
@@ -1006,6 +1006,14 @@ export async function createAction(workspaceId: string, input: CreateActionInput
     await notifyActionAssigned(created.ownerId, created.title, ws?.name ?? 'your workspace');
   }
   return created;
+}
+
+export async function requestExecutionPlan(decisionId: string): Promise<ExecutionPlanStep[]> {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const { data, error } = await supabase.functions.invoke('execution-plan', { body: { decisionId } });
+  if (error) throw new Error(error.message);
+  if (data?.error) throw new Error(String(data.error));
+  return Array.isArray(data?.steps) ? data.steps : [];
 }
 
 export async function listActionDependencies(workspaceId: string): Promise<ActionDependency[]> {

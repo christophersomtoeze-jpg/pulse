@@ -218,6 +218,14 @@ export interface DecisionGateAnswers {
 export type ActionStatus = 'todo' | 'in-progress' | 'done';
 export type ActionPriority = 'low' | 'medium' | 'high';
 
+export interface ExecutionPlanStep {
+  title: string;
+  rationale: string;
+  priority: ActionPriority;
+  daysFromNow: number;
+  dependsOnIndex: number | null;
+}
+
 export interface ActionDependency {
   id: string;
   workspaceId: string;

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { ArrowRight, CheckCircle2, Circle, Clock3, Plus, Sparkles, Target, Link2, AlertTriangle, X } from 'lucide-react';
-import { createAction, updateActionStatus, createActionDependency, deleteActionDependency, listActionDependencies, type WorkspaceMember } from '@/lib/pulseApi';
-import type { ActionDependency, DecisionIntelligence, DecisionSummary, WorkspaceAction, ActionPriority, ActionStatus } from '@/types';
+import { createAction, updateActionStatus, createActionDependency, deleteActionDependency, listActionDependencies, requestExecutionPlan, type WorkspaceMember } from '@/lib/pulseApi';
+import type { ActionDependency, DecisionIntelligence, DecisionSummary, WorkspaceAction, ActionPriority, ActionStatus, ExecutionPlanStep } from '@/types';
 
 interface Props {
   decision: DecisionSummary;
@@ -23,6 +23,9 @@ export function DecisionExecutionEngine({ decision, actions, intelligence, membe
   const [dependencyTarget, setDependencyTarget] = useState('');
   const [dependencyBlocker, setDependencyBlocker] = useState('');
   const [dependencyBusy, setDependencyBusy] = useState(false);
+  const [plan, setPlan] = useState<ExecutionPlanStep[]>([]);
+  const [planBusy, setPlanBusy] = useState(false);
+  const [planError, setPlanError] = useState('');
 
   const open = actions.filter((a) => a.status !== 'done');
   const done = actions.filter((a) => a.status === 'done').length;
@@ -53,6 +56,29 @@ export function DecisionExecutionEngine({ decision, actions, intelligence, membe
       }, userId);
       onChanged();
     } finally { setBusy(null); }
+  };
+
+  const generatePlan = async () => {
+    setPlanBusy(true); setPlanError('');
+    try { setPlan(await requestExecutionPlan(decision.id)); }
+    catch (e) { setPlanError(e instanceof Error ? e.message : 'Could not generate execution plan'); }
+    finally { setPlanBusy(false); }
+  };
+
+  const createPlan = async () => {
+    if (!plan.length) return;
+    setPlanBusy(true); setPlanError('');
+    try {
+      const created: string[] = [];
+      for (const step of plan) {
+        const due = new Date(Date.now() + Math.max(0, step.daysFromNow) * 86400000);
+        const action = await createAction(decision.workspaceId, { title: step.title, description: `${step.rationale}\n\nExecution step for: ${decision.title}`, decisionId: decision.id, ownerId: ownerId || decision.ownerId || null, priority: step.priority, deadline: due.toISOString() }, userId);
+        created.push(action.id);
+        if (step.dependsOnIndex != null && created[step.dependsOnIndex]) await createActionDependency(decision.workspaceId, action.id, created[step.dependsOnIndex], userId);
+      }
+      setPlan([]); onChanged();
+    } catch (e) { setPlanError(e instanceof Error ? e.message : 'Could not create execution plan'); }
+    finally { setPlanBusy(false); }
   };
 
   const addAll = async () => {
@@ -91,6 +117,15 @@ export function DecisionExecutionEngine({ decision, actions, intelligence, membe
 
       <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/5"><div className="h-full rounded-full bg-pulse-400 transition-all" style={{ width: `${progress}%` }} /></div>
       <div className="mt-2 flex flex-wrap gap-3 text-[10px] text-ink-500"><span>{done} done</span><span>{open.length} open</span><span>{ready.length} ready</span>{blocked.length > 0 && <span className="text-alert-300">{blocked.length} blocked</span>}{decision.deadline && <span className="flex items-center gap-1"><Clock3 className="h-3 w-3" /> Decision due {new Date(decision.deadline).toLocaleDateString()}</span>}</div>
+
+      <div className="mt-4 rounded-xl border border-flux-500/15 bg-flux-500/[.035] p-3">
+        <div className="flex items-center justify-between gap-2">
+          <div><p className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-flux-300"><Sparkles className="h-3 w-3" /> AI execution planner</p><p className="mt-1 text-[10px] text-ink-500">Generate a sequenced plan with suggested priorities, timing and dependencies.</p></div>
+          <button onClick={generatePlan} disabled={planBusy} className="secondary-btn h-7 shrink-0 text-[10px]">{planBusy && !plan.length ? 'Planning…' : 'Generate plan'}</button>
+        </div>
+        {plan.length > 0 && <div className="mt-3 space-y-1.5">{plan.map((step, i) => <div key={`${step.title}-${i}`} className="rounded-lg border border-white/5 bg-white/[.02] p-2.5"><div className="flex items-start gap-2"><span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-white/5 text-[9px] text-ink-400">{i + 1}</span><div className="min-w-0 flex-1"><p className="text-xs text-ink-200">{step.title}</p><p className="mt-0.5 text-[10px] text-ink-500">{step.rationale}</p><div className="mt-1 flex flex-wrap gap-2 text-[9px] text-ink-500"><span>{step.priority} priority</span><span>~{step.daysFromNow}d</span>{step.dependsOnIndex != null && <span>after step {step.dependsOnIndex + 1}</span>}</div></div></div></div>)}<button onClick={createPlan} disabled={planBusy} className="primary-btn mt-2 w-full justify-center text-xs">{planBusy ? 'Creating plan…' : 'Create all plan steps'}</button></div>}
+        {planError && <p className="mt-2 text-[10px] text-ember-400">{planError}</p>}
+      </div>
 
       {suggestions.length > 0 && (
         <div className="mt-4 rounded-xl border border-pulse-500/15 bg-pulse-500/[.04] p-3">
