@@ -19,6 +19,7 @@ import { OutcomeControls } from './OutcomeControls';
 import { ConnectedDecisionsPanel } from './ConnectedDecisionsPanel';
 import { OutcomeHistoryPanel } from './OutcomeHistoryPanel';
 import { DecisionExecutionPackage } from './DecisionExecutionPackage';
+import { DecisionExecutionEngine } from './DecisionExecutionEngine';
 
 const statusPill: Record<string, string> = {
   approved: 'text-flux-300 bg-flux-500/15 border-flux-500/30',
@@ -190,6 +191,15 @@ export function DecisionRoom({ decisionId, members, isAdmin, aiEnabled = true, o
                 {decisionActions.length === 0 && <p className="text-xs text-ink-500">No actions created from this decision yet.</p>}
               </div>
             </div>
+
+            <DecisionExecutionEngine
+              decision={decision}
+              actions={decisionActions}
+              intelligence={intelligence}
+              members={members}
+              userId={user?.id ?? ''}
+              onChanged={load}
+            />
 
             <ConnectedDecisionsPanel
               decisionId={decision.id}
