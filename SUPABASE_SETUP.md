@@ -247,7 +247,7 @@ supabase functions deploy stripe-billing-portal
 supabase functions deploy stripe-webhook --no-verify-jwt
 ```
 
-In Stripe, create Products/Prices for Pro and Business and use the corresponding Price IDs. Create a webhook endpoint:
+In Stripe, create Products/Prices for Pro and Business and use the corresponding Price IDs. The PULSE pricing shown to customers is Pro $39/month per workspace and Business $99/month per workspace; configure Stripe recurring prices to exactly match those amounts. Create a webhook endpoint:
 `https://<project-ref>.supabase.co/functions/v1/stripe-webhook`
 
 Listen for:

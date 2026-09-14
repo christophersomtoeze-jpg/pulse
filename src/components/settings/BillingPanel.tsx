@@ -7,6 +7,7 @@ const plans: Array<{
   id: Exclude<SubscriptionPlan, 'enterprise'>;
   name: string;
   price: string;
+  cadence: string;
   description: string;
   features: string[];
 }> = [
@@ -14,20 +15,23 @@ const plans: Array<{
     id: 'free',
     name: 'Free',
     price: '$0',
+    cadence: 'forever',
     description: 'For small teams getting started with better decisions.',
     features: ['Core discussions', 'Decisions & polls', 'Basic Actions', 'PULSE AI basics'],
   },
   {
     id: 'pro',
     name: 'Pro',
-    price: 'Paid',
+    price: '$39',
+    cadence: '/ workspace / month',
     description: 'For teams that want deeper intelligence and execution.',
     features: ['Everything in Free', 'Decision intelligence', 'Automation', 'Analytics & risk signals', 'Integrations'],
   },
   {
     id: 'business',
     name: 'Business',
-    price: 'Paid',
+    price: '$99',
+    cadence: '/ workspace / month',
     description: 'For organizations with advanced workflows and governance.',
     features: ['Everything in Pro', 'Advanced governance', 'Higher usage limits', 'Priority support'],
   },
@@ -137,14 +141,14 @@ export function BillingPanel({ workspaceId, isAdmin }: { workspaceId: string; is
                 <h3 className="font-display text-base font-semibold">{plan.name}</h3>
                 {isCurrent && <span className="text-[10px] font-semibold uppercase tracking-wider text-pulse-300">Current</span>}
               </div>
-              <p className="mt-1 text-xl font-bold">{plan.price}<span className="text-xs font-normal text-ink-500">{plan.id === 'free' ? '' : ' / workspace'}</span></p>
+              <p className="mt-1 text-xl font-bold">{plan.price}<span className="text-xs font-normal text-ink-500">{plan.cadence}</span></p>
               <p className="mt-2 min-h-10 text-xs leading-5 text-ink-400">{plan.description}</p>
               <ul className="mt-3 space-y-2">
                 {plan.features.map((feature) => <li key={feature} className="flex gap-2 text-xs text-ink-300"><Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-pulse-300" />{feature}</li>)}
               </ul>
               {canUpgrade && (
                 <button onClick={() => void upgrade(plan.id as 'pro' | 'business')} disabled={busy !== null} className="primary-btn mt-4 w-full justify-center text-xs disabled:opacity-40">
-                  <Sparkles className="h-3.5 w-3.5" /> {busy === plan.id ? 'Opening checkout…' : `Choose ${plan.name}`}
+                  <Sparkles className="h-3.5 w-3.5" /> {busy === plan.id ? 'Opening checkout…' : `Upgrade to ${plan.name} — ${plan.price}/mo`}
                 </button>
               )}
             </div>
@@ -153,7 +157,7 @@ export function BillingPanel({ workspaceId, isAdmin }: { workspaceId: string; is
       </div>
 
       <p className="px-1 text-[11px] leading-5 text-ink-600">
-        Stripe is the payment processor. Pricing shown here is intentionally not hard-coded to a currency amount until your Stripe Products and Prices are configured. Only workspace admins can start or manage billing.
+        Stripe is the payment processor. The public starting prices are $39/month for Pro and $99/month for Business. Your Stripe Price IDs must be configured to charge those same amounts. Only workspace admins can start or manage billing.
       </p>
     </section>
   );
