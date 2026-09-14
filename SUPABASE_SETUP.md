@@ -33,8 +33,10 @@ Billing is inert until you connect your own Stripe account:
 ```bash
 supabase secrets set STRIPE_SECRET_KEY=sk_live_...
 supabase secrets set STRIPE_WEBHOOK_SECRET=whsec_...
-supabase secrets set STRIPE_PRICE_PRO=price_...
-supabase secrets set STRIPE_PRICE_BUSINESS=price_...
+supabase secrets set STRIPE_PRICE_PRO_MONTHLY=price_...
+supabase secrets set STRIPE_PRICE_PRO_YEARLY=price_...
+supabase secrets set STRIPE_PRICE_BUSINESS_MONTHLY=price_...
+supabase secrets set STRIPE_PRICE_BUSINESS_YEARLY=price_...
 supabase functions deploy stripe-checkout
 supabase functions deploy stripe-webhook --no-verify-jwt
 ```
@@ -234,8 +236,10 @@ The app now includes secure Checkout and Billing Portal Edge Functions.
 
 Set these Supabase Edge Function secrets (never put them in `.env` or the browser):
 - `STRIPE_SECRET_KEY`
-- `STRIPE_PRICE_PRO`
-- `STRIPE_PRICE_BUSINESS`
+- `STRIPE_PRICE_PRO_MONTHLY`
+- `STRIPE_PRICE_PRO_YEARLY`
+- `STRIPE_PRICE_BUSINESS_MONTHLY`
+- `STRIPE_PRICE_BUSINESS_YEARLY`
 - `STRIPE_WEBHOOK_SECRET`
 - `APP_URL` (recommended, e.g. your production Render URL)
 - `SUPABASE_SERVICE_ROLE_KEY` (normally already available to Edge Functions)
@@ -287,7 +291,7 @@ PULSE displays these starting workspace prices:
 - Business: $149/month
 - Enterprise: custom
 
-Configure `STRIPE_PRICE_PRO` and `STRIPE_PRICE_BUSINESS` to Stripe recurring prices that match those displayed amounts. The app never stores Stripe secret keys in the browser. Deploy the billing summary function with:
+Configure four Stripe recurring Price IDs: Pro monthly $49, Pro yearly $490, Business monthly $149, and Business yearly $1,490. Set them as the four `STRIPE_PRICE_*` secrets. The app never stores Stripe secret keys in the browser. Deploy the billing summary function with:
 
 ```powershell
 supabase functions deploy stripe-billing-summary
@@ -303,7 +307,7 @@ PULSE displays these starting workspace prices:
 - Business: $149/month
 - Enterprise: custom
 
-Configure `STRIPE_PRICE_PRO` and `STRIPE_PRICE_BUSINESS` to Stripe recurring prices that match those displayed amounts. Deploy the billing summary function with:
+Configure four Stripe recurring Price IDs: Pro monthly $49, Pro yearly $490, Business monthly $149, and Business yearly $1,490. Set them as the four `STRIPE_PRICE_*` secrets. Deploy the billing summary function with:
 
 ```powershell
 supabase functions deploy stripe-billing-summary

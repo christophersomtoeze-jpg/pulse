@@ -1,13 +1,15 @@
 // Supabase Edge Function: stripe-checkout
 // Creates a Stripe Checkout subscription for a workspace admin.
-// Required secrets: STRIPE_SECRET_KEY, STRIPE_PRICE_PRO, STRIPE_PRICE_BUSINESS.
+// Required secrets: STRIPE_SECRET_KEY, STRIPE_PRICE_PRO_MONTHLY, STRIPE_PRICE_PRO_YEARLY, STRIPE_PRICE_BUSINESS_MONTHLY, STRIPE_PRICE_BUSINESS_YEARLY.
 // Optional: APP_URL for stable success/cancel URLs.
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
 
 const STRIPE_SECRET_KEY = Deno.env.get('STRIPE_SECRET_KEY');
-const STRIPE_PRICE_PRO = Deno.env.get('STRIPE_PRICE_PRO');
-const STRIPE_PRICE_BUSINESS = Deno.env.get('STRIPE_PRICE_BUSINESS');
+const STRIPE_PRICE_PRO_MONTHLY = Deno.env.get('STRIPE_PRICE_PRO_MONTHLY') || Deno.env.get('STRIPE_PRICE_PRO');
+const STRIPE_PRICE_PRO_YEARLY = Deno.env.get('STRIPE_PRICE_PRO_YEARLY');
+const STRIPE_PRICE_BUSINESS_MONTHLY = Deno.env.get('STRIPE_PRICE_BUSINESS_MONTHLY') || Deno.env.get('STRIPE_PRICE_BUSINESS');
+const STRIPE_PRICE_BUSINESS_YEARLY = Deno.env.get('STRIPE_PRICE_BUSINESS_YEARLY');
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!;
 const APP_URL = (Deno.env.get('APP_URL') || '').replace(/\/$/, '');
@@ -33,6 +35,7 @@ Deno.serve(async (req) => {
     const body = await req.json();
     const workspaceId = typeof body?.workspaceId === 'string' ? body.workspaceId : '';
     const plan = body?.plan === 'pro' || body?.plan === 'business' ? body.plan : null;
+    const billingCycle = body?.billingCycle === 'yearly' ? 'yearly' : 'monthly';
     if (!workspaceId || !plan) return json({ error: 'workspaceId and a valid plan are required' }, 400);
 
     const caller = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { global: { headers: { Authorization: authHeader } } });
@@ -50,8 +53,10 @@ Deno.serve(async (req) => {
     const { data: ws } = await caller.from('workspaces').select('id,name').eq('id', workspaceId).maybeSingle();
     if (!ws) return json({ error: 'Workspace not found.' }, 404);
 
-    const priceId = plan === 'pro' ? STRIPE_PRICE_PRO : STRIPE_PRICE_BUSINESS;
-    if (!priceId) return json({ error: `STRIPE_PRICE_${plan.toUpperCase()} is not configured.` }, 500);
+    const priceId = plan === 'pro'
+      ? (billingCycle === 'yearly' ? STRIPE_PRICE_PRO_YEARLY : STRIPE_PRICE_PRO_MONTHLY)
+      : (billingCycle === 'yearly' ? STRIPE_PRICE_BUSINESS_YEARLY : STRIPE_PRICE_BUSINESS_MONTHLY);
+    if (!priceId) return json({ error: `Stripe ${plan} ${billingCycle} price is not configured.` }, 500);
 
     const successBase = APP_URL || req.headers.get('origin') || 'http://localhost:5173';
     const params = new URLSearchParams({
@@ -63,8 +68,10 @@ Deno.serve(async (req) => {
       client_reference_id: workspaceId,
       'subscription_data[metadata][workspace_id]': workspaceId,
       'subscription_data[metadata][plan]': plan,
+      'subscription_data[metadata][billing_cycle]': billingCycle,
       'metadata[workspace_id]': workspaceId,
       'metadata[plan]': plan,
+      'metadata[billing_cycle]': billingCycle,
       'customer_email': userData.user.email ?? '',
     });
 

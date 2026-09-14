@@ -1433,9 +1433,9 @@ export async function getWorkspaceSubscription(workspaceId: string): Promise<Wor
   return { plan: data.plan, status: data.status, currentPeriodEnd: data.current_period_end };
 }
 
-export async function startCheckout(workspaceId: string, plan: 'pro' | 'business'): Promise<{ url: string | null; error: string | null }> {
+export async function startCheckout(workspaceId: string, plan: 'pro' | 'business', billingCycle: 'monthly' | 'yearly' = 'monthly'): Promise<{ url: string | null; error: string | null }> {
   if (!supabase) return { url: null, error: 'Supabase is not configured.' };
-  const { data, error } = await supabase.functions.invoke('stripe-checkout', { body: { workspaceId, plan } });
+  const { data, error } = await supabase.functions.invoke('stripe-checkout', { body: { workspaceId, plan, billingCycle } });
   if (error) return { url: null, error: error.message };
   return { url: data?.url ?? null, error: data?.error ?? null };
 }

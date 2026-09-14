@@ -6,28 +6,30 @@ import type { SubscriptionPlan, WorkspaceBillingSummary, WorkspaceSubscription }
 const plans: Array<{
   id: Exclude<SubscriptionPlan, 'enterprise'>;
   name: string;
-  price: string;
+  priceMonthly?: string;
+  priceYearly?: string;
   description: string;
   features: string[];
 }> = [
   {
     id: 'free',
     name: 'Free',
-    price: '$0',
     description: 'For small teams getting started with better decisions.',
     features: ['Core discussions', 'Decisions & polls', 'Basic Actions', 'PULSE AI basics'],
   },
   {
     id: 'pro',
     name: 'Pro',
-    price: '$49 / month',
+    priceMonthly: '$49 / month',
+    priceYearly: '$490 / year',
     description: 'For teams that want deeper intelligence and execution.',
     features: ['Everything in Free', 'Decision intelligence', 'Automation', 'Analytics & risk signals', 'Integrations'],
   },
   {
     id: 'business',
     name: 'Business',
-    price: '$149 / month',
+    priceMonthly: '$149 / month',
+    priceYearly: '$1,490 / year',
     description: 'For organizations with advanced workflows and governance.',
     features: ['Everything in Pro', 'Advanced governance', 'Higher usage limits', 'Priority support'],
   },
@@ -43,6 +45,7 @@ export function BillingPanel({ workspaceId, isAdmin }: { workspaceId: string; is
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [billing, setBilling] = useState<WorkspaceBillingSummary | null>(null);
+  const [billingCycle, setBillingCycle] = useState<'monthly' | 'yearly'>('monthly');
 
   const load = async () => {
     try {
@@ -74,7 +77,7 @@ export function BillingPanel({ workspaceId, isAdmin }: { workspaceId: string; is
   const upgrade = async (plan: 'pro' | 'business') => {
     setBusy(plan); setError(''); setNotice('');
     try {
-      const result = await startCheckout(workspaceId, plan);
+      const result = await startCheckout(workspaceId, plan, billingCycle);
       if (result.error) setError(result.error);
       else if (result.url) window.location.assign(result.url);
       else setError('Stripe did not return a checkout URL.');
@@ -132,6 +135,17 @@ export function BillingPanel({ workspaceId, isAdmin }: { workspaceId: string; is
       {notice && <div className="rounded-xl border border-emerald-400/20 bg-emerald-400/5 p-3 text-xs text-emerald-200">{notice}</div>}
       {error && <div className="rounded-xl border border-ember-400/20 bg-ember-400/5 p-3 text-xs text-ember-300">{error}</div>}
 
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-semibold text-ink-100">Choose your billing cycle</h3>
+          <p className="mt-1 text-[11px] text-ink-500">Yearly saves the equivalent of two months compared with paying monthly.</p>
+        </div>
+        <div className="flex rounded-xl border border-white/10 bg-black/20 p-1">
+          <button type="button" onClick={() => setBillingCycle('monthly')} className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${billingCycle === 'monthly' ? 'bg-white/10 text-ink-100' : 'text-ink-500'}`}>Monthly</button>
+          <button type="button" onClick={() => setBillingCycle('yearly')} className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${billingCycle === 'yearly' ? 'bg-pulse-400/15 text-pulse-200' : 'text-ink-500'}`}>Yearly · Save 16.7%</button>
+        </div>
+      </div>
+
       <div className="grid gap-3 md:grid-cols-3">
         {plans.map((plan) => {
           const isCurrent = current === plan.id;
@@ -142,7 +156,7 @@ export function BillingPanel({ workspaceId, isAdmin }: { workspaceId: string; is
                 <h3 className="font-display text-base font-semibold">{plan.name}</h3>
                 {isCurrent && <span className="text-[10px] font-semibold uppercase tracking-wider text-pulse-300">Current</span>}
               </div>
-              <p className="mt-1 text-xl font-bold">{plan.price}<span className="text-xs font-normal text-ink-500">{plan.id === 'free' ? '' : ' / workspace'}</span></p>
+              <p className="mt-1 text-xl font-bold">{plan.id === 'free' ? '$0' : (billingCycle === 'yearly' ? plan.priceYearly : plan.priceMonthly)}<span className="text-xs font-normal text-ink-500">{plan.id === 'free' ? '' : ' / workspace'}</span></p>
               <p className="mt-2 min-h-10 text-xs leading-5 text-ink-400">{plan.description}</p>
               <ul className="mt-3 space-y-2">
                 {plan.features.map((feature) => <li key={feature} className="flex gap-2 text-xs text-ink-300"><Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-pulse-300" />{feature}</li>)}
@@ -165,7 +179,7 @@ export function BillingPanel({ workspaceId, isAdmin }: { workspaceId: string; is
         </div>
       )}
 
-      <p className="px-1 text-[11px] leading-5 text-ink-600">Pricing displayed by PULSE: Free $0, Pro $49/month, Business $149/month. Stripe Price IDs must be configured with these matching amounts before live payments are enabled. Only workspace admins can start or manage billing.</p>
+      <p className="px-1 text-[11px] leading-5 text-ink-600">Pricing displayed by PULSE: Free $0, Pro $49/month or $490/year, Business $149/month or $1,490/year. Stripe Price IDs must be configured with these matching amounts before live payments are enabled. Only workspace admins can start or manage billing.</p>
     </section>
   );
 }
