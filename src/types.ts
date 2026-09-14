@@ -339,6 +339,12 @@ export interface WorkspaceSubscription {
   currentPeriodEnd: string | null;
 }
 
+export interface WorkspaceBillingSummary {
+  customerId: string | null;
+  paymentMethod: { brand: string; last4: string; expMonth: number | null; expYear: number | null } | null;
+  invoices: Array<{ id: string; status: string | null; amount: number; currency: string; createdAt: string; hostedUrl: string | null }>;
+}
+
 // ---- Phase 6: Integrations ----
 export type IntegrationProvider = 'slack' | 'teams' | 'google' | 'microsoft365' | 'jira' | 'notion';
 export interface WorkspaceIntegration {

@@ -247,7 +247,7 @@ supabase functions deploy stripe-billing-portal
 supabase functions deploy stripe-webhook --no-verify-jwt
 ```
 
-In Stripe, create Products/Prices for Pro and Business and use the corresponding Price IDs. The PULSE pricing shown to customers is Pro $39/month per workspace and Business $99/month per workspace; configure Stripe recurring prices to exactly match those amounts. Create a webhook endpoint:
+In Stripe, create Products/Prices for Pro and Business and use the corresponding Price IDs. Create a webhook endpoint:
 `https://<project-ref>.supabase.co/functions/v1/stripe-webhook`
 
 Listen for:
@@ -278,3 +278,35 @@ Current workspace usage limits shown by the product:
 - Enterprise: unlimited for these three meters.
 
 The visual gates are intentionally friendly and send users to Plan & Billing. The RPC is the server-safe foundation for the next enforcement pass, where metered Edge Functions will reject over-limit work before it is executed.
+
+## Billing 3.0 — pricing and customer billing summary
+
+PULSE displays these starting workspace prices:
+- Free: $0/month
+- Pro: $49/month
+- Business: $149/month
+- Enterprise: custom
+
+Configure `STRIPE_PRICE_PRO` and `STRIPE_PRICE_BUSINESS` to Stripe recurring prices that match those displayed amounts. The app never stores Stripe secret keys in the browser. Deploy the billing summary function with:
+
+```powershell
+supabase functions deploy stripe-billing-summary
+```
+
+The billing summary returns only non-sensitive customer billing information needed by the workspace UI: masked card details and recent hosted invoices.
+
+## Billing 3.0 — pricing and customer billing summary
+
+PULSE displays these starting workspace prices:
+- Free: $0/month
+- Pro: $49/month
+- Business: $149/month
+- Enterprise: custom
+
+Configure `STRIPE_PRICE_PRO` and `STRIPE_PRICE_BUSINESS` to Stripe recurring prices that match those displayed amounts. Deploy the billing summary function with:
+
+```powershell
+supabase functions deploy stripe-billing-summary
+```
+
+The billing summary returns only non-sensitive customer billing information needed by the workspace UI: masked card details and recent hosted invoices.

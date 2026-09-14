@@ -1,13 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Check, CreditCard, ExternalLink, Sparkles } from 'lucide-react';
-import { getWorkspaceSubscription, startCheckout, openBillingPortal } from '@/lib/pulseApi';
-import type { SubscriptionPlan, WorkspaceSubscription } from '@/types';
+import { Check, CreditCard, ExternalLink, FileText, Sparkles } from 'lucide-react';
+import { getWorkspaceSubscription, startCheckout, openBillingPortal, getWorkspaceBillingSummary } from '@/lib/pulseApi';
+import type { SubscriptionPlan, WorkspaceBillingSummary, WorkspaceSubscription } from '@/types';
 
 const plans: Array<{
   id: Exclude<SubscriptionPlan, 'enterprise'>;
   name: string;
   price: string;
-  cadence: string;
   description: string;
   features: string[];
 }> = [
@@ -15,23 +14,20 @@ const plans: Array<{
     id: 'free',
     name: 'Free',
     price: '$0',
-    cadence: 'forever',
     description: 'For small teams getting started with better decisions.',
     features: ['Core discussions', 'Decisions & polls', 'Basic Actions', 'PULSE AI basics'],
   },
   {
     id: 'pro',
     name: 'Pro',
-    price: '$39',
-    cadence: '/ workspace / month',
+    price: '$49 / month',
     description: 'For teams that want deeper intelligence and execution.',
     features: ['Everything in Free', 'Decision intelligence', 'Automation', 'Analytics & risk signals', 'Integrations'],
   },
   {
     id: 'business',
     name: 'Business',
-    price: '$99',
-    cadence: '/ workspace / month',
+    price: '$149 / month',
     description: 'For organizations with advanced workflows and governance.',
     features: ['Everything in Pro', 'Advanced governance', 'Higher usage limits', 'Priority support'],
   },
@@ -46,9 +42,14 @@ export function BillingPanel({ workspaceId, isAdmin }: { workspaceId: string; is
   const [busy, setBusy] = useState<'pro' | 'business' | 'portal' | null>(null);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [billing, setBilling] = useState<WorkspaceBillingSummary | null>(null);
 
   const load = async () => {
-    try { setSub(await getWorkspaceSubscription(workspaceId)); }
+    try {
+      const [subscription, summary] = await Promise.all([getWorkspaceSubscription(workspaceId), getWorkspaceBillingSummary(workspaceId).catch(() => null)]);
+      setSub(subscription);
+      setBilling(summary);
+    }
     catch (err) { setError(err instanceof Error ? err.message : 'Unable to load billing.'); }
   };
 
@@ -141,14 +142,14 @@ export function BillingPanel({ workspaceId, isAdmin }: { workspaceId: string; is
                 <h3 className="font-display text-base font-semibold">{plan.name}</h3>
                 {isCurrent && <span className="text-[10px] font-semibold uppercase tracking-wider text-pulse-300">Current</span>}
               </div>
-              <p className="mt-1 text-xl font-bold">{plan.price}<span className="text-xs font-normal text-ink-500">{plan.cadence}</span></p>
+              <p className="mt-1 text-xl font-bold">{plan.price}<span className="text-xs font-normal text-ink-500">{plan.id === 'free' ? '' : ' / workspace'}</span></p>
               <p className="mt-2 min-h-10 text-xs leading-5 text-ink-400">{plan.description}</p>
               <ul className="mt-3 space-y-2">
                 {plan.features.map((feature) => <li key={feature} className="flex gap-2 text-xs text-ink-300"><Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-pulse-300" />{feature}</li>)}
               </ul>
               {canUpgrade && (
                 <button onClick={() => void upgrade(plan.id as 'pro' | 'business')} disabled={busy !== null} className="primary-btn mt-4 w-full justify-center text-xs disabled:opacity-40">
-                  <Sparkles className="h-3.5 w-3.5" /> {busy === plan.id ? 'Opening checkout…' : `Upgrade to ${plan.name} — ${plan.price}/mo`}
+                  <Sparkles className="h-3.5 w-3.5" /> {busy === plan.id ? 'Opening checkout…' : `Choose ${plan.name}`}
                 </button>
               )}
             </div>
@@ -156,9 +157,15 @@ export function BillingPanel({ workspaceId, isAdmin }: { workspaceId: string; is
         })}
       </div>
 
-      <p className="px-1 text-[11px] leading-5 text-ink-600">
-        Stripe is the payment processor. The public starting prices are $39/month for Pro and $99/month for Business. Your Stripe Price IDs must be configured to charge those same amounts. Only workspace admins can start or manage billing.
-      </p>
+      {current !== 'free' && billing && (
+        <div className="glass rounded-2xl p-4">
+          <h3 className="flex items-center gap-2 text-sm font-semibold"><CreditCard className="h-3.5 w-3.5 text-pulse-300" /> Payment & invoices</h3>
+          {billing.paymentMethod ? <p className="mt-2 text-xs text-ink-300">{billing.paymentMethod.brand.toUpperCase()} ending in {billing.paymentMethod.last4}{billing.paymentMethod.expMonth && billing.paymentMethod.expYear ? ` · expires ${String(billing.paymentMethod.expMonth).padStart(2, '0')}/${billing.paymentMethod.expYear}` : ''}</p> : <p className="mt-2 text-xs text-ink-500">No saved card is available. Use Manage subscription to add one.</p>}
+          {billing.invoices.length > 0 && <div className="mt-3 divide-y divide-white/5 rounded-xl border border-white/5 bg-black/20">{billing.invoices.slice(0, 5).map((invoice) => <div key={invoice.id} className="flex items-center justify-between gap-3 p-3"><div className="min-w-0"><p className="text-xs font-medium text-ink-200">{new Date(invoice.createdAt).toLocaleDateString()}</p><p className="text-[10px] uppercase text-ink-600">{invoice.status ?? 'invoice'}</p></div><div className="flex items-center gap-3"><span className="text-xs font-semibold text-ink-100">{new Intl.NumberFormat(undefined, { style: 'currency', currency: invoice.currency.toUpperCase() }).format(invoice.amount / 100)}</span>{invoice.hostedUrl && <a href={invoice.hostedUrl} target="_blank" rel="noreferrer" className="text-ink-500 hover:text-pulse-200" aria-label="Open invoice"><FileText className="h-3.5 w-3.5" /></a>}</div></div>)}</div>}
+        </div>
+      )}
+
+      <p className="px-1 text-[11px] leading-5 text-ink-600">Pricing displayed by PULSE: Free $0, Pro $49/month, Business $149/month. Stripe Price IDs must be configured with these matching amounts before live payments are enabled. Only workspace admins can start or manage billing.</p>
     </section>
   );
 }

@@ -6,6 +6,7 @@ import type {
   AssistantMessage, MeetingSummary, RiskItem, WorkspaceListItem, AuditLogEntry,
   AnalyticsSnapshot, SmartSearchResult, WorkspaceSubscription, WorkspaceIntegration, IntegrationProvider, PlatformMetrics,
   ProfileDetails, NotificationPreferences, LoginHistoryEntry, WorkspaceGeneralSettings, WorkspaceUsage, WorkspaceUsageSnapshot,
+  WorkspaceBillingSummary,
   ApiKeySummary, IncomingWebhookSummary, SsoDomainSummary,
   DecisionLink, DecisionRelationshipType, DecisionOutcomeReview, OutcomeReviewType, DecisionGateAnswers,
   RecommendedDecisionProcess, DecisionReversibility, DecisionUrgency,
@@ -1444,6 +1445,14 @@ export async function openBillingPortal(workspaceId: string): Promise<{ url: str
   const { data, error } = await supabase.functions.invoke('stripe-billing-portal', { body: { workspaceId } });
   if (error) return { url: null, error: error.message };
   return { url: data?.url ?? null, error: data?.error ?? null };
+}
+
+export async function getWorkspaceBillingSummary(workspaceId: string): Promise<WorkspaceBillingSummary> {
+  if (!supabase) return { customerId: null, paymentMethod: null, invoices: [] };
+  const { data, error } = await supabase.functions.invoke('stripe-billing-summary', { body: { workspaceId } });
+  if (error) throw new Error(error.message);
+  if (data?.error) throw new Error(data.error);
+  return { customerId: data?.customerId ?? null, paymentMethod: data?.paymentMethod ?? null, invoices: data?.invoices ?? [] };
 }
 
 // ============================================================================
