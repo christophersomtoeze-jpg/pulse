@@ -56,7 +56,31 @@ Deno.serve(async (req) => {
     const priceId = plan === 'pro'
       ? (billingCycle === 'yearly' ? STRIPE_PRICE_PRO_YEARLY : STRIPE_PRICE_PRO_MONTHLY)
       : (billingCycle === 'yearly' ? STRIPE_PRICE_BUSINESS_YEARLY : STRIPE_PRICE_BUSINESS_MONTHLY);
-    if (!priceId) return json({ error: `Stripe ${plan} ${billingCycle} price is not configured.` }, 500);
+    if (!priceId) return json({ error: `Stripe ${plan} ${billingCycle} price is not configured. Add the matching Supabase secret.` }, 500);
+
+    // Validate the configured Price before creating Checkout. This catches the
+    // most common setup mistakes (wrong mode, wrong Price ID, one-time price,
+    // or a monthly/yearly mismatch) with a useful error instead of a generic
+    // "Edge Function returned a non-2xx status code" message in the browser.
+    const priceRes = await fetch(`https://api.stripe.com/v1/prices/${encodeURIComponent(priceId)}`, {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${STRIPE_SECRET_KEY}` },
+    });
+    const priceText = await priceRes.text();
+    if (!priceRes.ok) {
+      let message = `Stripe could not read Price ${priceId}.`;
+      try {
+        const parsed = JSON.parse(priceText);
+        message = parsed?.error?.message || message;
+      } catch { /* keep fallback */ }
+      return json({ error: message }, 500);
+    }
+    const price = JSON.parse(priceText);
+    const expectedInterval = billingCycle === 'yearly' ? 'year' : 'month';
+    if (price?.active !== true) return json({ error: `Stripe Price ${priceId} is inactive.` }, 500);
+    if (price?.type !== 'recurring' || price?.recurring?.interval !== expectedInterval) {
+      return json({ error: `Stripe Price ${priceId} is not a recurring ${billingCycle} Price. Check the Price ID configured for ${plan} ${billingCycle}.` }, 500);
+    }
 
     const successBase = APP_URL || req.headers.get('origin') || 'http://localhost:5173';
     const params = new URLSearchParams({
@@ -72,8 +96,9 @@ Deno.serve(async (req) => {
       'metadata[workspace_id]': workspaceId,
       'metadata[plan]': plan,
       'metadata[billing_cycle]': billingCycle,
-      'customer_email': userData.user.email ?? '',
     });
+
+    if (userData.user.email) params.set('customer_email', userData.user.email);
 
     const stripeRes = await fetch('https://api.stripe.com/v1/checkout/sessions', {
       method: 'POST',
@@ -81,7 +106,14 @@ Deno.serve(async (req) => {
       body: params.toString(),
     });
     const stripeBody = await stripeRes.text();
-    if (!stripeRes.ok) return json({ error: `Stripe error: ${stripeBody.slice(0, 300)}` }, 502);
+    if (!stripeRes.ok) {
+      let message = `Stripe could not start checkout (HTTP ${stripeRes.status}).`;
+      try {
+        const parsed = JSON.parse(stripeBody);
+        message = parsed?.error?.message || message;
+      } catch { /* keep fallback */ }
+      return json({ error: message }, 502);
+    }
     const session = JSON.parse(stripeBody);
     return json({ url: session.url ?? null });
   } catch (err) {

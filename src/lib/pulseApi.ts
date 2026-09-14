@@ -1436,7 +1436,19 @@ export async function getWorkspaceSubscription(workspaceId: string): Promise<Wor
 export async function startCheckout(workspaceId: string, plan: 'pro' | 'business', billingCycle: 'monthly' | 'yearly' = 'monthly'): Promise<{ url: string | null; error: string | null }> {
   if (!supabase) return { url: null, error: 'Supabase is not configured.' };
   const { data, error } = await supabase.functions.invoke('stripe-checkout', { body: { workspaceId, plan, billingCycle } });
-  if (error) return { url: null, error: error.message };
+  if (error) {
+    // Supabase FunctionsHttpError often carries the Edge Function response in
+    // `context`. Surface the server's actual Stripe/setup message instead of
+    // the generic non-2xx error shown by the browser.
+    try {
+      const context = (error as unknown as { context?: Response }).context;
+      if (context instanceof Response) {
+        const body = await context.clone().json().catch(() => null) as { error?: string } | null;
+        if (body?.error) return { url: null, error: body.error };
+      }
+    } catch { /* fall back to the SDK error */ }
+    return { url: null, error: error.message };
+  }
   return { url: data?.url ?? null, error: data?.error ?? null };
 }
 

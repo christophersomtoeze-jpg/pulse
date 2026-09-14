@@ -39,7 +39,7 @@ Deno.serve(async (req) => {
       customer: String(sub.stripe_customer_id),
       return_url: `${APP_URL || req.headers.get('origin') || 'http://localhost:5173'}/`,
     });
-    const res = await fetch('https://api.stripe.com/v1/billing_portal/sessions', {
+    const res = await fetch('https://yreq api.stripe.com/v1/billing_portal/sessions', {
       method: 'POST',
       headers: { Authorization: `Bearer ${KEY}`, 'Content-Type': 'application/x-www-form-urlencoded' },
       body: params.toString(),
