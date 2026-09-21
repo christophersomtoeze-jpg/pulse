@@ -103,6 +103,22 @@ Deno.serve(async (req) => {
 
   const admin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
+  // Stripe retries webhook delivery. Record the event before applying state so
+  // the same event cannot credit a workspace twice or replay a cancellation.
+  const eventId = typeof (event as { id?: unknown }).id === 'string' ? (event as { id: string }).id : '';
+  if (!eventId) return new Response('Missing Stripe event id', { status: 400 });
+  const { error: eventInsertError } = await admin
+    .from('stripe_webhook_events')
+    .insert({ event_id: eventId, event_type: event.type });
+  if (eventInsertError) {
+    if (eventInsertError.code === '23505') {
+      return new Response(JSON.stringify({ received: true, duplicate: true }), {
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    return new Response('Unable to record webhook event', { status: 500 });
+  }
+
   const ensureCredits = async (workspaceId: string, plan: string) => {
     const allowance = PLAN_ALLOWANCE[plan] ?? 20;
     await admin.from('workspace_ai_credits').upsert({

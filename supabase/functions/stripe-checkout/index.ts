@@ -51,8 +51,15 @@ Deno.serve(async (req) => {
     const { data: userData } = await callerClient.auth.getUser();
     if (!userData?.user) return json({ error: 'Not authenticated' }, 401);
 
-    const { data: ws } = await callerClient.from('workspaces').select('id,name').eq('id', workspaceId).maybeSingle();
-    if (!ws) return json({ error: 'Not a member of this workspace' }, 403);
+    const { data: membership } = await callerClient
+      .from('workspace_members')
+      .select('role')
+      .eq('workspace_id', workspaceId)
+      .eq('user_id', userData.user.id)
+      .maybeSingle();
+    if (!membership || (membership.role !== 'owner' && membership.role !== 'admin')) {
+      return json({ error: 'Only workspace owners/admins can change billing.' }, 403);
+    }
 
     const origin = req.headers.get('origin') ?? '';
     const params = new URLSearchParams({
