@@ -308,6 +308,8 @@ function AppShell() {
             memberCount={workspace?.memberCount ?? 128}
             isLive={Boolean(workspace)}
             activity={dashboard.teamActivity}
+            onNavigate={setView}
+            onOpenDecision={openDecision}
             searchOpen={globalSearchOpen}
             onToggleSearch={() => setGlobalSearchOpen((v) => !v)}
             onOpenNav={() => setNavOpen(true)}
@@ -395,10 +397,10 @@ function AppShell() {
         {view === 'meeting-summaries' && workspace && <MeetingSummariesView workspaceId={workspace.id} aiEnabled={aiEnabled} />}
         {view === 'meeting-summaries' && !workspace && <ComingSoonView icon={Sparkles} phase="Connect Supabase" title="Meeting Summaries need a workspace" description="Sign in and create a workspace, then deploy the meeting-summary function." />}
         {view === 'team' && workspace && <TeamView workspaceId={workspace.id} />}
-        {view === 'notifications' && <NotificationsView activity={dashboard.teamActivity} />}
+        {view === 'notifications' && <NotificationsView activity={dashboard.teamActivity} onNavigate={setView} onOpenDecision={openDecision} />}
         {view === 'automation' && workspace && <AutomationView workspaceId={workspace.id} />}
         {view === 'invitations' && workspace && <InvitationsView workspaceId={workspace.id} />}
-        {view === 'audit-log' && workspace && <AuditLogView workspaceId={workspace.id} />}
+        {view === 'audit-log' && workspace && <AuditLogView workspaceId={workspace.id} onNavigate={setView} onOpenDecision={openDecision} />}
         {view === 'audit-log' && !workspace && <ComingSoonView icon={Sparkles} phase="Connect Supabase" title="Audit Log needs a workspace" description="Every role change, invite, and decision outcome is logged automatically once you're connected." />}
         {view === 'settings' && workspace && (
           <SettingsHub

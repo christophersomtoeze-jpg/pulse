@@ -1,9 +1,12 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Activity, Bell, Menu, Search, Users2 } from 'lucide-react';
 import { useAuth } from '@/auth/AuthProvider';
 import { useTranslation } from '@/lib/i18n/I18nProvider';
 import { NotificationsPopover } from './NotificationsPopover';
 import type { DecisionHistoryEntry } from '@/types';
+import type { AppView } from '@/lib/viewTypes';
+import { listNotifications } from '@/lib/pulseApi';
+import { supabase } from '@/lib/supabase';
 
 interface HomeHeaderProps {
   memberCount: number;
@@ -12,13 +15,23 @@ interface HomeHeaderProps {
   searchOpen: boolean;
   onToggleSearch: () => void;
   onOpenNav: () => void;
+  onNavigate: (view: AppView) => void;
+  onOpenDecision: (id: string) => void;
 }
 
-export function HomeHeader({ memberCount, isLive, activity, searchOpen, onToggleSearch, onOpenNav }: HomeHeaderProps) {
+export function HomeHeader({ memberCount, isLive, activity, searchOpen, onToggleSearch, onOpenNav, onNavigate, onOpenDecision }: HomeHeaderProps) {
   const { user } = useAuth();
   const { t } = useTranslation();
   const [notifOpen, setNotifOpen] = useState(false);
-  const unread = activity.length;
+  const [unread, setUnread] = useState(0);
+  useEffect(() => {
+    const refresh = () => void listNotifications(40).then(items => setUnread(items.filter(n => !n.readAt).length)).catch(() => undefined);
+    refresh();
+    const client = supabase;
+    if (!client) return;
+    const channel = client.channel('header-unread-count').on('postgres_changes', { event: '*', schema: 'public', table: 'notifications' }, refresh).subscribe();
+    return () => { void client.removeChannel(channel); };
+  }, []);
 
   return (
     <header className="relative px-4 pt-5 pb-3">
@@ -65,7 +78,7 @@ export function HomeHeader({ memberCount, isLive, activity, searchOpen, onToggle
         </span>
       </div>
 
-      <NotificationsPopover open={notifOpen} activity={activity} onClose={() => setNotifOpen(false)} />
+      <NotificationsPopover open={notifOpen} activity={activity} onClose={() => setNotifOpen(false)} onNavigate={onNavigate} onOpenDecision={onOpenDecision} />
     </header>
   );
 }

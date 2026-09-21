@@ -860,6 +860,7 @@ export async function listDecisionHistory(decisionId: string): Promise<DecisionH
     const changedBy = Array.isArray(r.changed_by) ? r.changed_by[0] : r.changed_by;
     return {
       id: r.id,
+      decisionId,
       status: r.status,
       outcome: r.outcome,
       note: r.note,
@@ -1761,7 +1762,18 @@ export async function listAuditLog(workspaceId: string): Promise<AuditLogEntry[]
   type Row = { id: string; action: string; detail: string | null; created_at: string; actor: { full_name: string } | { full_name: string }[] | null };
   return ((data ?? []) as unknown as Row[]).map((row) => {
     const actor = Array.isArray(row.actor) ? row.actor[0] : row.actor;
-    return { id: row.id, action: row.action, detail: row.detail, actorName: actor?.full_name ?? null, createdAt: row.created_at };
+    let targetType: AuditLogEntry['targetType'] = null;
+    let targetId: string | null = null;
+    if (row.action.startsWith('member.')) { targetType = 'team'; targetId = row.action === 'member.role_changed' || row.action === 'member.removed' ? row.detail?.match(UUID_RE)?.[0] ?? null : null; }
+    else if (row.action.startsWith('invite.')) { targetType = 'invitations'; targetId = row.detail?.match(UUID_RE)?.[0] ?? null; }
+    else if (row.action === 'content.reported' && row.detail) {
+      try {
+        const parsed = JSON.parse(row.detail) as { targetType?: string; targetId?: string };
+        targetId = parsed.targetId ?? null;
+        targetType = parsed.targetType === 'decision' ? 'decision' : parsed.targetType ? 'notifications' : null;
+      } catch { /* legacy/non-JSON audit entries */ }
+    }
+    return { id: row.id, action: row.action, detail: row.detail, actorName: actor?.full_name ?? null, createdAt: row.created_at, targetType, targetId };
   });
 }
 
@@ -2207,18 +2219,46 @@ async function notifyByPush(userId: string, category: 'mentions' | 'decisions' |
   catch { /* best-effort — push failures never block the underlying action */ }
 }
 
-export interface PulseNotification { id: string; type: string; title: string; body: string | null; readAt: string | null; createdAt: string; }
+export type NotificationTargetType = 'decision' | 'action' | 'team' | 'invitations' | 'notifications' | null;
+export interface PulseNotification { id: string; type: string; title: string; body: string | null; readAt: string | null; createdAt: string; targetType: NotificationTargetType; targetId: string | null; }
+
+const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i;
+
+export function getNotificationTarget(notification: Pick<PulseNotification, 'type' | 'body'>): { type: NotificationTargetType; id: string | null } {
+  const id = notification.body?.match(UUID_RE)?.[0] ?? null;
+  if (!id) return { type: notification.type.startsWith('invitation') ? 'invitations' : 'notifications', id: null };
+  if (notification.type.startsWith('automation:') || notification.type.includes('action')) return { type: 'action', id };
+  if (notification.type === 'decision_outcome_review' || notification.type.includes('decision')) return { type: 'decision', id };
+  return { type: 'notifications', id: null };
+}
+
+function mapNotification(n: any): PulseNotification {
+  const target = getNotificationTarget({ type: String(n.type ?? ''), body: n.body ?? null });
+  return { id: n.id, type: n.type, title: n.title, body: n.body, readAt: n.read_at, createdAt: n.created_at, targetType: target.type, targetId: target.id };
+}
 
 export async function listNotifications(limit = 40): Promise<PulseNotification[]> {
   if (!supabase) return [];
-  const { data, error } = await supabase.from('notifications').select('*').order('created_at', { ascending: false }).limit(limit);
+  const { data, error } = await supabase.from('notifications').select('id,type,title,body,read_at,created_at').order('created_at', { ascending: false }).limit(limit);
   if (error) throw new Error(error.message);
-  return (data ?? []).map((n) => ({ id: n.id, type: n.type, title: n.title, body: n.body, readAt: n.read_at, createdAt: n.created_at }));
+  return (data ?? []).map(mapNotification);
 }
 
 export async function markNotificationRead(id: string) {
   if (!supabase) return;
   const { error } = await supabase.from('notifications').update({ read_at: new Date().toISOString() }).eq('id', id);
+  if (error) throw new Error(error.message);
+}
+
+export async function markAllNotificationsRead() {
+  if (!supabase) return;
+  const { error } = await supabase.from('notifications').update({ read_at: new Date().toISOString() }).is('read_at', null);
+  if (error) throw new Error(error.message);
+}
+
+export async function clearAllNotifications() {
+  if (!supabase) return;
+  const { error } = await supabase.from('notifications').delete().neq('id', '00000000-0000-0000-0000-000000000000');
   if (error) throw new Error(error.message);
 }
 

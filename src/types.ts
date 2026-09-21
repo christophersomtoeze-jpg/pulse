@@ -109,6 +109,7 @@ export interface DecisionComment {
 
 export interface DecisionHistoryEntry {
   id: string;
+  decisionId?: string;
   status: string | null;
   outcome: string | null;
   note: string | null;
@@ -337,6 +338,8 @@ export interface AuditLogEntry {
   detail: string | null;
   actorName: string | null;
   createdAt: string;
+  targetType: 'decision' | 'team' | 'invitations' | 'notifications' | null;
+  targetId: string | null;
 }
 
 export interface AnalyticsSnapshot {
