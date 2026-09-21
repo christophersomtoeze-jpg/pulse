@@ -1,96 +1,99 @@
 # PULSE — Decision OS
 
-PULSE is a polished React/TypeScript product prototype for an AI-powered team decision workspace.
+PULSE is an AI-powered team decision workspace (Decision OS).  
+It captures context, forces clarity, tracks outcomes, and builds institutional memory so organizations stop repeating expensive mistakes.
 
-## Current rebuild
+## Current status (Phase 0 foundation)
 
-- Responsive desktop + mobile application shell
-- PULSE visual system: dark glassmorphism, neon accents, responsive cards
-- Workspace sidebar and mobile navigation
-- Living State Ledger with decisions, polls and resources
-- Discussion feed with expandable topics
-- Searchable discussions
-- Interactive poll voting in demo mode
-- Real-time-style discussion drawer with message composer in demo mode
-- Notifications panel
-- Resources hub
-- AI Insights workspace (UI/demo data)
-- Accessibility-minded focus states and reduced-motion support
-- Production metadata and environment template
+The codebase already includes:
 
-## Run locally
+- Responsive desktop + mobile shell with dark glassmorphism UI
+- Living State Ledger, Decision Rooms, polls, discussions, resources
+- Pre-decision Gate, Decision Brief / Execution Package, outcome reviews
+- Organizational Memory, Risk Center, Analytics, AI Insights UI
+- AuthProvider (email/password + OAuth ready)
+- Real Supabase queries in `src/lib/pulseApi.ts` (demo mode when keys are missing)
+- Production schema with extensive Row Level Security (`schema.sql`)
+- Edge functions for AI summaries, account deletion, outcome reviews, Stripe, Slack, Jira, Notion, Microsoft, Google, etc.
+- Privacy Policy + Terms pages
+- Dual-mode: works as a polished demo without credentials; becomes live when Supabase is connected
+
+**Phase 0 setup instructions:** see [`PHASE0_SETUP.md`](./PHASE0_SETUP.md)
+
+## Quick start (local)
 
 ```bash
+cp .env.example .env.local
+# Add your VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY
+
 npm install
+npm run typecheck
 npm run dev
 ```
 
-Quality checks:
+Open http://localhost:5173
 
-```bash
-npm run typecheck
-npm run lint
-npm run build
-```
+- No keys → demo data
+- With keys → real authentication and live data
 
-## Important: demo vs production
+## Scripts
 
-This rebuild intentionally keeps the application usable without credentials. The displayed data and messages are demo/local state; Supabase and AI are not yet connected to production infrastructure.
+| Command            | Purpose                    |
+|--------------------|----------------------------|
+| `npm run dev`      | Local development server   |
+| `npm run build`    | Production build           |
+| `npm run typecheck`| TypeScript check           |
+| `npm run lint`     | ESLint                     |
+| `npm run preview`  | Preview production build   |
 
-## Remaining work before a real public launch
+## Architecture
 
-### P0 — required
-1. Supabase production project and database schema.
-2. Authentication: email/password, magic link or OAuth.
-3. Row Level Security (RLS) for workspaces, memberships, messages, polls, files and decisions.
-4. Replace demo state with Supabase queries/subscriptions.
-5. Secure server/edge functions for AI calls; never expose provider secrets in browser code.
-6. File storage with access policies and upload limits.
-7. Error monitoring, analytics and product event tracking.
-8. Automated tests and end-to-end tests.
-9. Production deployment, domain, HTTPS and environment secrets.
-10. Privacy policy, terms, data deletion/export process and support contact.
+- **Frontend**: React 18 + TypeScript + Vite + Tailwind + Framer Motion
+- **Backend**: Supabase (Postgres + Auth + Realtime + Storage + Edge Functions)
+- **AI**: Server-side only (Anthropic via Edge Functions — keys never reach the browser)
+- **Payments**: Stripe (edge functions ready)
+- **Integrations**: Slack, Google, Microsoft, Jira, Notion (edge function stubs present)
 
-### P1 — strongly recommended
-- Invite flows and roles (owner/admin/member/guest)
-- Workspace settings and billing
-- Stripe subscriptions and plan limits
-- Email/push notifications
-- Moderation/reporting and audit log
-- Better search across messages/files
-- AI summaries, decision extraction and action-item generation
-- Rate limiting, abuse protection and backup/restore procedures
-- App Store / Play Store packaging if native mobile apps are required
+## Phase roadmap
 
-## Suggested production architecture
+### Phase 0 — Foundation (current focus)
+- Supabase project + schema + RLS
+- Real authentication
+- Secure AI edge functions
+- File storage policies
+- Account deletion + legal pages
+- Production deployment checklist
 
-Frontend: React + TypeScript + Vite (or React Native/Expo if native mobile apps are the target).
+See `PHASE0_SETUP.md` for the exact step-by-step.
 
-Backend: Supabase/Postgres + Realtime + Storage + Edge Functions.
+### Phase 1 — Core Decision OS
+- Fully live Decision Rooms, Gate, Brief, Outcome Reviews
+- Living State Ledger + Risk Center on real data
+- Action tracking with owners and due dates
+- Stronger AI decision intelligence
 
-AI: server-side AI gateway/Edge Function with usage limits and audit logging.
+### Phase 2 — Collaboration & Enterprise
+- Invites + full roles (owner/admin/member/guest)
+- Audit log, moderation, advanced search
+- Email / push / digests
+- SSO readiness
 
-Payments: Stripe.
+### Phase 3 — Integrations
+- Complete Slack, Teams, Google, Jira, Notion, calendar sync
 
-Observability: Sentry (errors) + product analytics such as PostHog/Amplitude.
+### Phase 4 — Monetization
+- Stripe subscriptions (Pro / Business)
+- Plan limits + usage-based AI credits
 
-## Launch estimate from this codebase
+### Phase 5 — Intelligence layer (moat)
+- Decision quality scoring, pattern detection, predictive risk, automated post-mortems
 
-With one person working consistently alongside an AI coding assistant:
+## Important security notes
 
-- Production MVP: ~6–10 weeks
-- Strong commercial v1: ~3–5 months
-- Mature SaaS with billing, mobile, AI and scale hardening: ~5–9+ months
+- Never put `SUPABASE_SERVICE_ROLE_KEY`, `ANTHROPIC_API_KEY`, or `STRIPE_SECRET_KEY` in any `VITE_` variable.
+- All AI and billing calls go through Supabase Edge Functions.
+- RLS policies in `schema.sql` scope every row to workspace membership.
 
-The exact timeline depends mainly on backend scope, authentication, billing, native mobile requirements and the level of AI functionality.
+## License / ownership
 
-
-## Current integration status
-
-The repository contains real integration flows for Slack, Google Workspace, Microsoft 365/Teams, Jira, and Notion. Provider credentials are intentionally **not** included. Add the browser-safe provider client IDs to Render and keep all client secrets/tokens in Supabase Edge Function secrets. A provider is only marked Connected after its callback/token verification succeeds.
-
-Supabase browser configuration uses `VITE_SUPABASE_PUBLISHABLE_KEY` (preferred). The legacy `VITE_SUPABASE_ANON_KEY` remains a temporary fallback for existing deployments.
-
-
-### Billing 2.0
-Secure Stripe Checkout, subscription lifecycle syncing, and Billing Portal support are included. Configure Stripe secrets and webhook settings before enabling real payments.
+Private project. All rights reserved by the project owner.

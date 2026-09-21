@@ -1,7 +1,15 @@
 import { useEffect, useState } from 'react';
 import { AlertTriangle, Download, Trash2 } from 'lucide-react';
 import { useAuth } from '@/auth/AuthProvider';
-import { deleteMyAccount, deleteWorkspace, exportMyData, getDataRetentionDays, setDataRetentionDays } from '@/lib/pulseApi';
+import {
+  deleteMyAccount,
+  deleteWorkspace,
+  downloadWorkspaceExport,
+  exportMyData,
+  exportWorkspaceData,
+  getDataRetentionDays,
+  setDataRetentionDays,
+} from '@/lib/pulseApi';
 
 function downloadJson(data: unknown, filename: string) {
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
@@ -62,6 +70,19 @@ export function DataPrivacyPanel({ workspaceId, workspaceName, isOwner }: { work
     finally { setExporting(false); }
   };
 
+  const exportWorkspace = async () => {
+    setExporting(true);
+    setError('');
+    try {
+      const payload = await exportWorkspaceData(workspaceId);
+      downloadWorkspaceExport(payload, workspaceName);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not export workspace');
+    } finally {
+      setExporting(false);
+    }
+  };
+
   const removeWorkspace = async () => {
     if (confirmText !== workspaceName) return;
     setDeletingWorkspace(true); setError('');
@@ -83,6 +104,16 @@ export function DataPrivacyPanel({ workspaceId, workspaceName, isOwner }: { work
         <p className="mt-1 text-xs text-ink-500">Every decision, comment, vote, and action you've created, as a JSON file.</p>
         <button onClick={exportData} disabled={exporting} className="primary-btn mt-3 disabled:opacity-40">{exporting ? 'Preparing export…' : 'Export my data'}</button>
       </section>
+
+      {isOwner && (
+        <section className="glass rounded-2xl p-4">
+          <h2 className="flex items-center gap-1.5 text-sm font-semibold"><Download className="h-3.5 w-3.5 text-pulse-300" /> Export entire workspace</h2>
+          <p className="mt-1 text-xs text-ink-500">Members, decisions, discussions, actions, polls, and audit log as one JSON file (for backup or compliance).</p>
+          <button onClick={() => void exportWorkspace()} disabled={exporting} className="secondary-btn mt-3 disabled:opacity-40">
+            {exporting ? 'Preparing export…' : 'Export workspace data'}
+          </button>
+        </section>
+      )}
 
       <RetentionSection workspaceId={workspaceId} isOwner={isOwner} />
 

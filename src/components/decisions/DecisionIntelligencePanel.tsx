@@ -28,7 +28,7 @@ export function DecisionIntelligencePanel({ decisionId, workspaceId, enabled = t
 
   const analyze = async () => {
     setBusy(true); setError('');
-    try { const value = await requestDecisionIntelligence(decisionId); setAnalysis(value); onUpdated?.(value); }
+    try { const value = await requestDecisionIntelligence(decisionId, workspaceId); setAnalysis(value); onUpdated?.(value); }
     catch (e) { setError(e instanceof Error ? e.message : 'Decision intelligence failed'); }
     finally { setBusy(false); }
   };

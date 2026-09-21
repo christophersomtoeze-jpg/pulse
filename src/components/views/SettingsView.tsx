@@ -4,7 +4,7 @@ import { useAuth } from '@/auth/AuthProvider';
 import { getWorkspaceSubscription, startCheckout } from '@/lib/pulseApi';
 import type { WorkspaceSubscription } from '@/types';
 
-const planLabel: Record<WorkspaceSubscription['plan'], string> = { free: 'Free', pro: 'Pro', business: 'Business', enterprise: 'Enterprise' };
+const planLabel: Record<WorkspaceSubscription['plan'], string> = { free: 'Free', starter: 'Starter', pro: 'Pro', business: 'Business', enterprise: 'Enterprise' };
 
 function BillingSection({ workspaceId, isAdmin }: { workspaceId: string; isAdmin: boolean }) {
   const [sub, setSub] = useState<WorkspaceSubscription | null>(null);

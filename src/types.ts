@@ -218,23 +218,6 @@ export interface DecisionGateAnswers {
 export type ActionStatus = 'todo' | 'in-progress' | 'done';
 export type ActionPriority = 'low' | 'medium' | 'high';
 
-export interface ExecutionPlanStep {
-  title: string;
-  rationale: string;
-  priority: ActionPriority;
-  daysFromNow: number;
-  dependsOnIndex: number | null;
-}
-
-export interface ActionDependency {
-  id: string;
-  workspaceId: string;
-  actionId: string;
-  dependsOnActionId: string;
-  createdBy: string;
-  createdAt: string;
-}
-
 export interface WorkspaceAction {
   id: string;
   workspaceId: string;
@@ -249,6 +232,47 @@ export interface WorkspaceAction {
   priority: ActionPriority;
   createdAt: string;
   jiraIssueKey: string | null;
+}
+
+export interface ActionDependency {
+  id: string;
+  workspaceId: string;
+  actionId: string;
+  dependsOnActionId: string;
+  createdBy: string;
+  createdAt: string;
+}
+
+export interface ExecutionPlanStep {
+  title: string;
+  rationale: string;
+  priority: ActionPriority;
+  daysFromNow: number;
+  dependsOnIndex: number | null;
+}
+
+export interface ExecutionAutopilotBottleneck {
+  actionId: string;
+  reason: string;
+  blockedCount: number;
+}
+
+export interface ExecutionAutopilotIntervention {
+  kind: 'bottleneck' | 'overdue' | 'owner' | 'deadline' | 'dependency';
+  title: string;
+  detail: string;
+  priority: ActionPriority;
+  actionId: string | null;
+  suggestedAction: string;
+}
+
+export interface ExecutionAutopilotAnalysis {
+  decisionId: string;
+  health: 'healthy' | 'at-risk' | 'critical';
+  headline: string;
+  bottlenecks: ExecutionAutopilotBottleneck[];
+  interventions: ExecutionAutopilotIntervention[];
+  confidence: number;
 }
 
 // ---- Global / decision-history search ----
@@ -332,17 +356,11 @@ export interface AnalyticsSnapshot {
   topBottlenecks: { label: string; count: number; detail: string }[];
 }
 
-export type SubscriptionPlan = 'free' | 'pro' | 'business' | 'enterprise';
+export type SubscriptionPlan = 'free' | 'starter' | 'pro' | 'business' | 'enterprise';
 export interface WorkspaceSubscription {
   plan: SubscriptionPlan;
   status: 'active' | 'past_due' | 'canceled';
   currentPeriodEnd: string | null;
-}
-
-export interface WorkspaceBillingSummary {
-  customerId: string | null;
-  paymentMethod: { brand: string; last4: string; expMonth: number | null; expYear: number | null } | null;
-  invoices: Array<{ id: string; status: string | null; amount: number; currency: string; createdAt: string; hostedUrl: string | null }>;
 }
 
 // ---- Phase 6: Integrations ----
@@ -406,15 +424,6 @@ export interface WorkspaceUsage {
   automationsRun: number;
 }
 
-export interface WorkspaceUsageSnapshot extends WorkspaceUsage {
-  plan: SubscriptionPlan;
-  memberLimit: number | null;
-  aiAnalysesLimit: number | null;
-  automationsLimit: number | null;
-  periodStart: string;
-}
-
-
 // ---- Push, API keys, webhooks, retention ----
 export interface ApiKeySummary {
   id: string;
@@ -438,21 +447,4 @@ export interface SsoDomainSummary {
   domain: string;
   defaultRole: string;
   createdAt: string;
-}
-
-export type ExecutionInterventionKind = 'bottleneck' | 'overdue' | 'owner' | 'deadline' | 'dependency';
-export interface ExecutionIntervention {
-  kind: ExecutionInterventionKind;
-  title: string;
-  detail: string;
-  priority: ActionPriority;
-  actionId: string | null;
-  suggestedAction: string;
-}
-export interface ExecutionAutopilotAnalysis {
-  health: 'healthy' | 'at-risk' | 'critical';
-  headline: string;
-  bottlenecks: { actionId: string; reason: string; blockedCount: number }[];
-  interventions: ExecutionIntervention[];
-  confidence: number;
 }

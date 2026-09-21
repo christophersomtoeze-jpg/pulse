@@ -24,11 +24,24 @@ export function VotingPanel({ tally, disabled, onVote }: VotingPanelProps) {
   };
 
   const pct = (n: number) => (tally.total ? Math.round((n / tally.total) * 100) : 0);
+  const dominant = Math.max(tally.yes, tally.no, tally.needsInfo);
+  const alignmentPct = tally.total ? Math.round((dominant / tally.total) * 100) : 0;
+  const alignmentText =
+    tally.total === 0
+      ? 'No votes yet'
+      : tally.yes === dominant
+        ? `${alignmentPct}% aligned toward Yes`
+        : tally.no === dominant
+          ? `${alignmentPct}% aligned toward No`
+          : `${alignmentPct}% requesting more information`;
 
   return (
     <div className="rounded-2xl border border-white/5 bg-white/[.02] p-4">
       <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold">Vote</h3>
+        <div>
+          <h3 className="text-sm font-semibold">Vote</h3>
+          <p className="mt-0.5 text-[10px] text-ink-400">{alignmentText}</p>
+        </div>
         <button
           type="button"
           onClick={() => setAnonymous((v) => !v)}

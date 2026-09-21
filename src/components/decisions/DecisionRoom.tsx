@@ -19,8 +19,6 @@ import { OutcomeControls } from './OutcomeControls';
 import { ConnectedDecisionsPanel } from './ConnectedDecisionsPanel';
 import { OutcomeHistoryPanel } from './OutcomeHistoryPanel';
 import { DecisionExecutionPackage } from './DecisionExecutionPackage';
-import { DecisionExecutionEngine } from './DecisionExecutionEngine';
-import { ExecutionAutopilot } from './ExecutionAutopilot';
 
 const statusPill: Record<string, string> = {
   approved: 'text-flux-300 bg-flux-500/15 border-flux-500/30',
@@ -71,7 +69,7 @@ export function DecisionRoom({ decisionId, members, isAdmin, aiEnabled = true, o
         d ? listActions(d.workspaceId) : Promise.resolve([] as WorkspaceAction[]),
       ]);
       setDecision(d); setResources(res); setComments(cmts); setTally(t); setHistory(hist); setIntelligence(ai); setLinks(linksData); setOutcomeReviews(outcomeData);
-      setDecisionActions(allActions.filter((a: WorkspaceAction) => a.decisionId === decisionId));
+      setDecisionActions(allActions.filter((a) => a.decisionId === decisionId));
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not load this decision');
     }
@@ -87,6 +85,8 @@ export function DecisionRoom({ decisionId, members, isAdmin, aiEnabled = true, o
       .on('postgres_changes', { event: '*', schema: 'public', table: 'decision_comments', filter: `decision_id=eq.${decisionId}` }, load)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'decision_votes', filter: `decision_id=eq.${decisionId}` }, load)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'decisions', filter: `id=eq.${decisionId}` }, load)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'actions', filter: `decision_id=eq.${decisionId}` }, load)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'decision_resources', filter: `decision_id=eq.${decisionId}` }, load)
       .subscribe();
     return () => { client.removeChannel(channel); };
   }, [decisionId, load]);
@@ -192,23 +192,6 @@ export function DecisionRoom({ decisionId, members, isAdmin, aiEnabled = true, o
                 {decisionActions.length === 0 && <p className="text-xs text-ink-500">No actions created from this decision yet.</p>}
               </div>
             </div>
-
-            <ExecutionAutopilot
-              decision={decision}
-              actions={decisionActions}
-              members={members}
-              userId={user?.id ?? ''}
-              onChanged={load}
-            />
-
-            <DecisionExecutionEngine
-              decision={decision}
-              actions={decisionActions}
-              intelligence={intelligence}
-              members={members}
-              userId={user?.id ?? ''}
-              onChanged={load}
-            />
 
             <ConnectedDecisionsPanel
               decisionId={decision.id}

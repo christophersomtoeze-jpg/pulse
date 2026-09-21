@@ -33,12 +33,13 @@ const featurePlans: Record<PaidFeature, SubscriptionPlan> = {
   sso: 'business',
 };
 
-const planRank: Record<SubscriptionPlan, number> = { free: 0, pro: 1, business: 2, enterprise: 3 };
+const planRank: Record<SubscriptionPlan, number> = { free: 0, starter: 1, pro: 2, business: 3, enterprise: 4 };
 
 export const PLAN_LIMITS: Record<SubscriptionPlan, PlanLimits> = {
-  free: { members: 5, aiAnalyses: 20, automations: 0 },
-  pro: { members: 25, aiAnalyses: 500, automations: 25 },
-  business: { members: 250, aiAnalyses: 5000, automations: 250 },
+  free: { members: 3, aiAnalyses: 20, automations: 0 },
+  starter: { members: 10, aiAnalyses: 100, automations: 10 },
+  pro: { members: 50, aiAnalyses: 500, automations: 25 },
+  business: { members: 500, aiAnalyses: 2000, automations: 250 },
   enterprise: { members: null, aiAnalyses: null, automations: null },
 };
 

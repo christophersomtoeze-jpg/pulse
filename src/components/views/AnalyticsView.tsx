@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Activity, AlertOctagon, ArrowDownRight, ArrowUpRight, CheckCircle2, Clock3, Gauge, PieChart, Target, TrendingUp, Users } from 'lucide-react';
-import { computeAnalytics } from '@/lib/pulseApi';
+import { computeAnalytics, computeIntelligenceInsights, generatePostMortem, type IntelligenceInsights } from '@/lib/pulseApi';
 import type { AnalyticsSnapshot } from '@/types';
 
 function StatCard({ icon: Icon, value, label, hint }: { icon: typeof Clock3; value: string; label: string; hint?: string }) {
@@ -29,17 +29,26 @@ function Progress({ value, label }: { value: number; label: string }) {
   );
 }
 
-export function AnalyticsView({ workspaceId }: { workspaceId: string }) {
+export function AnalyticsView({ workspaceId, onOpenDecision }: { workspaceId: string; onOpenDecision?: (id: string) => void }) {
   const [data, setData] = useState<AnalyticsSnapshot | null>(null);
+  const [intel, setIntel] = useState<IntelligenceInsights | null>(null);
   const [error, setError] = useState('');
   const [refreshing, setRefreshing] = useState(false);
+  const [pmBusy, setPmBusy] = useState(false);
+  const [pmNotice, setPmNotice] = useState('');
 
   const refresh = async () => {
     setRefreshing(true);
     setError('');
-    try { setData(await computeAnalytics(workspaceId)); }
-    catch (e) { setError(e instanceof Error ? e.message : 'Could not compute analytics'); }
-    finally { setRefreshing(false); }
+    try {
+      const [a, i] = await Promise.all([computeAnalytics(workspaceId), computeIntelligenceInsights(workspaceId)]);
+      setData(a);
+      setIntel(i);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not compute analytics');
+    } finally {
+      setRefreshing(false);
+    }
   };
 
   useEffect(() => { void refresh(); }, [workspaceId]);
@@ -112,6 +121,104 @@ export function AnalyticsView({ workspaceId }: { workspaceId: string }) {
         <div className="flex items-center gap-2"><AlertOctagon className="h-4 w-4 text-amber-300" /><div><h3 className="text-sm font-semibold">Top bottlenecks</h3><p className="text-[10px] text-ink-500">Where execution is losing momentum</p></div></div>
         {data.topBottlenecks.length === 0 ? <div className="mt-4 flex items-center gap-2 rounded-xl border border-emerald-400/10 bg-emerald-400/5 p-3 text-xs text-emerald-200"><CheckCircle2 className="h-4 w-4" /> No major bottleneck detected from current workspace data.</div> : <div className="mt-3 space-y-2">{data.topBottlenecks.map((b) => <div key={b.label} className="flex items-center justify-between gap-3 rounded-xl border border-white/5 bg-white/[.025] p-3"><div><p className="text-xs font-semibold">{b.label}</p><p className="mt-0.5 text-[10px] text-ink-500">{b.detail}</p></div><span className="rounded-lg bg-amber-400/10 px-2 py-1 text-xs font-semibold text-amber-200">{b.count}</span></div>)}</div>}
       </div>
+
+      {intel && (
+        <>
+          <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+            <StatCard icon={Gauge} value={intel.avgQualityScore != null ? `${intel.avgQualityScore}` : '—'} label="Avg quality score" hint="0–100" />
+            <StatCard icon={Target} value={intel.similarWinRate != null ? `${intel.similarWinRate}%` : '—'} label="Healthy outcome rate" />
+            <StatCard icon={AlertOctagon} value={String(intel.predictiveRisks.length)} label="Predictive risks" />
+            <StatCard icon={CheckCircle2} value={String(intel.postMortemReady)} label="Ready for post-mortem" />
+          </div>
+
+          <div className="glass rounded-2xl p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-semibold">Quality over time</h3>
+                <p className="text-[10px] text-ink-500">Average AI quality score by month</p>
+              </div>
+              <TrendingUp className="h-4 w-4 text-pulse-300" />
+            </div>
+            {intel.qualityTrend.every((p) => p.decisions === 0) ? (
+              <p className="mt-3 text-xs text-ink-500">Run Decision Intelligence on a few decisions to populate this trend.</p>
+            ) : (
+              <div className="mt-4 flex items-end gap-1.5" style={{ height: 112 }}>
+                {intel.qualityTrend.map((p) => (
+                  <div key={p.month} className="flex flex-1 flex-col items-center gap-1">
+                    <div
+                      className="w-full rounded-t-md bg-gradient-to-t from-[#7c3aed] to-[#06b6d4]"
+                      style={{ height: `${Math.max(4, (p.avgQuality / 100) * 92)}px` }}
+                      title={`${p.month}: ${p.avgQuality}/100 · ${p.decisions} decisions`}
+                    />
+                    <span className="text-[8px] text-ink-500">{p.month.slice(5)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="glass rounded-2xl p-4">
+            <h3 className="text-sm font-semibold">Patterns & bias signals</h3>
+            <p className="text-[10px] text-ink-500">How your team tends to decide — speed, alignment, participation, reversals</p>
+            {intel.patterns.length === 0 ? (
+              <div className="mt-3 flex items-center gap-2 rounded-xl border border-emerald-400/10 bg-emerald-400/5 p-3 text-xs text-emerald-200">
+                <CheckCircle2 className="h-4 w-4" /> No concerning patterns detected yet.
+              </div>
+            ) : (
+              <div className="mt-3 space-y-2">
+                {intel.patterns.map((pat) => (
+                  <div key={pat.id} className="rounded-xl border border-white/5 bg-white/[.025] p-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-xs font-semibold">{pat.title}</p>
+                      <span className={`text-[10px] uppercase ${pat.severity === 'alert' ? 'text-ember-300' : pat.severity === 'watch' ? 'text-alert-300' : 'text-ink-500'}`}>
+                        {pat.severity}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-[11px] text-ink-400">{pat.detail}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="glass rounded-2xl p-4">
+            <h3 className="text-sm font-semibold">Predictive risk</h3>
+            <p className="text-[10px] text-ink-500">Open decisions that resemble past weak outcomes or stalls</p>
+            {intel.predictiveRisks.length === 0 ? (
+              <p className="mt-3 text-xs text-ink-500">No elevated risks from current open decisions.</p>
+            ) : (
+              <div className="mt-3 space-y-2">
+                {intel.predictiveRisks.map((r) => (
+                  <button
+                    key={r.id}
+                    type="button"
+                    onClick={() => r.relatedDecisionId && onOpenDecision?.(r.relatedDecisionId)}
+                    className="w-full rounded-xl border border-white/5 bg-white/[.025] p-3 text-left hover:border-pulse-500/30"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-xs font-semibold">{r.title}</p>
+                      <span className={`text-[10px] uppercase ${r.probabilityLabel === 'elevated' ? 'text-ember-300' : 'text-alert-300'}`}>
+                        {r.probabilityLabel}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-[11px] text-ink-400">{r.reason}</p>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {intel.postMortemReady > 0 && (
+            <div className="glass rounded-2xl p-4">
+              <h3 className="text-sm font-semibold">Automated post-mortems</h3>
+              <p className="mt-1 text-[11px] text-ink-400">
+                {intel.postMortemReady} decision(s) are past 30 days since outcome — open a Decision Room and run intelligence, or use generatePostMortem from the API for a full markdown brief.
+              </p>
+              {pmNotice && <p className="mt-2 text-xs text-flux-400">{pmNotice}</p>}
+            </div>
+          )}
+        </>
+      )}
 
       <div className="glass rounded-2xl p-4 text-center">
         <Users className="mx-auto h-5 w-5 text-pulse-300" />

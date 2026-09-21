@@ -2,15 +2,15 @@ import type {
   ActivePoll, FeedMessage, PinnedDecision, TopicNode,
   DecisionAIAnalysis, DecisionComment, DecisionHistoryEntry,
   DecisionOutcome, DecisionResource, DecisionSummary, DecisionVoteTally, VoteChoice,
-  WorkspaceAction, ActionStatus, ActionPriority, ActionDependency, GlobalSearchResults,
+  WorkspaceAction, ActionStatus, ActionPriority, GlobalSearchResults,
   AssistantMessage, MeetingSummary, RiskItem, WorkspaceListItem, AuditLogEntry,
   AnalyticsSnapshot, SmartSearchResult, WorkspaceSubscription, WorkspaceIntegration, IntegrationProvider, PlatformMetrics,
-  ProfileDetails, NotificationPreferences, LoginHistoryEntry, WorkspaceGeneralSettings, WorkspaceUsage, WorkspaceUsageSnapshot,
-  WorkspaceBillingSummary,
+  ProfileDetails, NotificationPreferences, LoginHistoryEntry, WorkspaceGeneralSettings, WorkspaceUsage,
   ApiKeySummary, IncomingWebhookSummary, SsoDomainSummary,
   DecisionLink, DecisionRelationshipType, DecisionOutcomeReview, OutcomeReviewType, DecisionGateAnswers,
   RecommendedDecisionProcess, DecisionReversibility, DecisionUrgency,
-  DecisionIntelligence, DecisionRiskLevel, ExecutionPlanStep, ExecutionAutopilotAnalysis,
+  DecisionIntelligence, DecisionRiskLevel,
+  ActionDependency, ExecutionPlanStep, ExecutionAutopilotAnalysis,
 } from '@/types';
 import { supabase } from '@/lib/supabase';
 
@@ -20,7 +20,8 @@ export interface WorkspaceSummary {
   memberCount: number;
 }
 
-export type WorkspaceRole = 'owner' | 'admin' | 'member';
+/** Full role system for Phase 2. `viewer` is treated as read-only guest in DB. */
+export type WorkspaceRole = 'owner' | 'admin' | 'member' | 'guest' | 'viewer';
 export interface WorkspaceMember {
   userId: string;
   name: string;
@@ -34,6 +35,24 @@ export interface WorkspaceInvite {
   role: WorkspaceRole;
   status: 'pending' | 'accepted' | 'revoked';
   createdAt: string;
+}
+
+/** Roles that can mutate workspace content (decisions, votes, actions). */
+export function canMutateContent(role: WorkspaceRole | string | null | undefined): boolean {
+  return role === 'owner' || role === 'admin' || role === 'member';
+}
+
+/** Roles that can manage members, settings, billing. */
+export function canManageWorkspace(role: WorkspaceRole | string | null | undefined): boolean {
+  return role === 'owner' || role === 'admin';
+}
+
+/** Map UI role to DB enum value (schema: owner/admin/member/guest). */
+function toDbRole(role: WorkspaceRole): 'owner' | 'admin' | 'member' | 'guest' {
+  if (role === 'viewer' || role === 'guest') return 'guest';
+  if (role === 'admin') return 'admin';
+  if (role === 'owner') return 'owner';
+  return 'member';
 }
 
 export async function loadWorkspaceData(workspaceId?: string) {
@@ -249,28 +268,114 @@ export async function listWorkspaceInvites(workspaceId: string): Promise<Workspa
 
 export async function inviteToWorkspace(workspaceId: string, email: string, role: WorkspaceRole = 'member') {
   if (!supabase) throw new Error('Supabase is not configured.');
+  const seatCheck = await assertCanInvite(workspaceId);
+  if (!seatCheck.ok) throw new Error(seatCheck.error || 'Seat limit reached.');
   const cleanEmail = email.trim().toLowerCase();
+  const dbRole = toDbRole(role);
   const { data: existing, error: lookupError } = await supabase.from('profiles').select('id,email').eq('email', cleanEmail).maybeSingle();
   if (lookupError) throw new Error(lookupError.message);
   if (existing?.id) {
-    const { error } = await supabase.from('workspace_members').upsert({ workspace_id: workspaceId, user_id: existing.id, role }, { onConflict: 'workspace_id,user_id' });
+    const { error } = await supabase.from('workspace_members').upsert({ workspace_id: workspaceId, user_id: existing.id, role: dbRole }, { onConflict: 'workspace_id,user_id' });
     if (error) throw new Error(error.message);
+    await supabase.from('audit_log').insert({ workspace_id: workspaceId, actor_id: (await supabase.auth.getUser()).data.user?.id ?? null, action: 'member.added', detail: `${cleanEmail} as ${dbRole}` });
     return { added: true, email: cleanEmail };
   }
-  const { data, error } = await supabase.from('workspace_invitations').insert({ workspace_id: workspaceId, email: cleanEmail, role }).select('id,email,role,status,created_at').single();
+  const { data, error } = await supabase.from('workspace_invitations').insert({ workspace_id: workspaceId, email: cleanEmail, role: dbRole }).select('id,email,role,status,created_at').single();
   if (error) throw new Error(error.message);
+  await supabase.from('audit_log').insert({ workspace_id: workspaceId, actor_id: (await supabase.auth.getUser()).data.user?.id ?? null, action: 'invite.created', detail: `${cleanEmail} as ${dbRole}` });
   return { added: false, invitation: data };
 }
 
 export async function updateWorkspaceMemberRole(workspaceId: string, userId: string, role: WorkspaceRole) {
   if (!supabase) throw new Error('Supabase is not configured.');
-  const { error } = await supabase.from('workspace_members').update({ role }).eq('workspace_id', workspaceId).eq('user_id', userId);
+  const dbRole = toDbRole(role);
+  const { error } = await supabase.from('workspace_members').update({ role: dbRole }).eq('workspace_id', workspaceId).eq('user_id', userId);
   if (error) throw new Error(error.message);
+  await supabase.from('audit_log').insert({ workspace_id: workspaceId, actor_id: (await supabase.auth.getUser()).data.user?.id ?? null, action: 'member.role_changed', detail: `${userId} → ${dbRole}` });
 }
 
 export async function removeWorkspaceMember(workspaceId: string, userId: string) {
   if (!supabase) throw new Error('Supabase is not configured.');
   const { error } = await supabase.from('workspace_members').delete().eq('workspace_id', workspaceId).eq('user_id', userId);
+  if (error) throw new Error(error.message);
+  await supabase.from('audit_log').insert({ workspace_id: workspaceId, actor_id: (await supabase.auth.getUser()).data.user?.id ?? null, action: 'member.removed', detail: userId });
+}
+
+export async function revokeWorkspaceInvite(inviteId: string, workspaceId: string) {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const { error } = await supabase.from('workspace_invitations').update({ status: 'revoked' }).eq('id', inviteId).eq('workspace_id', workspaceId);
+  if (error) throw new Error(error.message);
+  await supabase.from('audit_log').insert({ workspace_id: workspaceId, actor_id: (await supabase.auth.getUser()).data.user?.id ?? null, action: 'invite.revoked', detail: inviteId });
+}
+
+/** Full workspace data export for admins (JSON download). */
+export async function exportWorkspaceData(workspaceId: string): Promise<Record<string, unknown>> {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const [ws, members, decisions, discussions, actions, polls, audit] = await Promise.all([
+    supabase.from('workspaces').select('*').eq('id', workspaceId).maybeSingle(),
+    supabase.from('workspace_members').select('user_id,role,created_at,profiles:user_id(full_name,email)').eq('workspace_id', workspaceId),
+    supabase.from('decisions').select('*').eq('workspace_id', workspaceId).order('created_at', { ascending: false }),
+    supabase.from('discussions').select('*').eq('workspace_id', workspaceId).order('created_at', { ascending: false }),
+    supabase.from('actions').select('*').eq('workspace_id', workspaceId).order('created_at', { ascending: false }),
+    supabase.from('polls').select('*').eq('workspace_id', workspaceId).order('created_at', { ascending: false }),
+    supabase.from('audit_log').select('*').eq('workspace_id', workspaceId).order('created_at', { ascending: false }).limit(500),
+  ]);
+  if (ws.error) throw new Error(ws.error.message);
+  return {
+    exportedAt: new Date().toISOString(),
+    workspace: ws.data,
+    members: members.data ?? [],
+    decisions: decisions.data ?? [],
+    discussions: discussions.data ?? [],
+    actions: actions.data ?? [],
+    polls: polls.data ?? [],
+    auditLog: audit.data ?? [],
+  };
+}
+
+export function downloadWorkspaceExport(payload: Record<string, unknown>, workspaceName: string) {
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `pulse-export-${workspaceName.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}-${new Date().toISOString().slice(0, 10)}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+/** Simple client-side rate limiter for abuse protection on high-cost actions. */
+const rateBuckets = new Map<string, number[]>();
+export function checkRateLimit(key: string, maxPerMinute = 20): boolean {
+  const now = Date.now();
+  const windowMs = 60_000;
+  const hits = (rateBuckets.get(key) ?? []).filter((t) => now - t < windowMs);
+  if (hits.length >= maxPerMinute) {
+    rateBuckets.set(key, hits);
+    return false;
+  }
+  hits.push(now);
+  rateBuckets.set(key, hits);
+  return true;
+}
+
+export type ContentReportReason = 'spam' | 'harassment' | 'off_topic' | 'sensitive' | 'other';
+
+/** Report a message or decision for moderation review (stored in audit_log until dedicated table exists). */
+export async function reportContent(workspaceId: string, input: {
+  targetType: 'message' | 'decision' | 'comment' | 'resource';
+  targetId: string;
+  reason: ContentReportReason;
+  note?: string;
+}) {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  if (!checkRateLimit(`report:${workspaceId}`, 10)) throw new Error('Too many reports. Please wait a minute.');
+  const { data: userData } = await supabase.auth.getUser();
+  const { error } = await supabase.from('audit_log').insert({
+    workspace_id: workspaceId,
+    actor_id: userData.user?.id ?? null,
+    action: 'content.reported',
+    detail: JSON.stringify(input),
+  });
   if (error) throw new Error(error.message);
 }
 
@@ -823,12 +928,324 @@ export async function getLatestDecisionIntelligence(decisionId: string): Promise
   return mapDecisionIntelligence(data as Record<string, unknown>);
 }
 
-export async function requestDecisionIntelligence(decisionId: string): Promise<DecisionIntelligence> {
+export async function requestDecisionIntelligence(decisionId: string, workspaceId?: string): Promise<DecisionIntelligence> {
   if (!supabase) throw new Error('Supabase is not configured.');
+  // Enforce AI credit limit when workspace is known
+  if (workspaceId) {
+    const credit = await consumeAiCredit(workspaceId, 2);
+    if (!credit.ok) throw new Error(credit.error || 'AI credit limit reached.');
+  }
   const { data, error } = await supabase.functions.invoke('decision-intelligence', { body: { decisionId } });
   if (error) throw new Error(error.message);
+  if (data?.error) throw new Error(String(data.error));
   return mapDecisionIntelligence(data as Record<string, unknown>);
 }
+
+export interface QualityTrendPoint {
+  month: string;
+  avgQuality: number;
+  decisions: number;
+  avgOutcomeScore: number | null;
+}
+
+export interface DecisionPatternInsight {
+  id: string;
+  kind: 'speed' | 'alignment' | 'participation' | 'reversal' | 'overdue' | 'quality';
+  title: string;
+  detail: string;
+  severity: 'info' | 'watch' | 'alert';
+  value: number;
+}
+
+export interface PredictiveRiskInsight {
+  id: string;
+  title: string;
+  reason: string;
+  probabilityLabel: 'elevated' | 'moderate' | 'low';
+  relatedDecisionId: string | null;
+}
+
+export interface IntelligenceInsights {
+  avgQualityScore: number | null;
+  qualityTrend: QualityTrendPoint[];
+  patterns: DecisionPatternInsight[];
+  predictiveRisks: PredictiveRiskInsight[];
+  similarWinRate: number | null;
+  postMortemReady: number;
+}
+
+/** Workspace-level intelligence: quality over time, patterns/bias, predictive risk. */
+export async function computeIntelligenceInsights(workspaceId: string): Promise<IntelligenceInsights> {
+  const empty: IntelligenceInsights = {
+    avgQualityScore: null,
+    qualityTrend: [],
+    patterns: [],
+    predictiveRisks: [],
+    similarWinRate: null,
+    postMortemReady: 0,
+  };
+  if (!supabase) return empty;
+
+  const [decisionsRes, votesRes, actionsRes, analysesRes, membersRes] = await Promise.all([
+    supabase.from('decisions').select('id,title,status,outcome,outcome_score,created_at,decided_at,is_reversed,updated_at').eq('workspace_id', workspaceId),
+    supabase.from('decision_votes').select('decision_id,choice,user_id,created_at,decisions!inner(workspace_id)').eq('decisions.workspace_id', workspaceId),
+    supabase.from('actions').select('id,status,deadline,decision_id').eq('workspace_id', workspaceId),
+    supabase.from('decision_ai_analyses').select('decision_id,quality_score,risk_level,created_at,decisions!inner(workspace_id)').eq('decisions.workspace_id', workspaceId).order('created_at', { ascending: false }).limit(200),
+    supabase.from('workspace_members').select('user_id').eq('workspace_id', workspaceId),
+  ]);
+
+  if (decisionsRes.error) throw new Error(decisionsRes.error.message);
+
+  const decisions = decisionsRes.data ?? [];
+  const votes = votesRes.data ?? [];
+  const actions = actionsRes.data ?? [];
+  const analyses = analysesRes.data ?? [];
+  const memberCount = (membersRes.data ?? []).length || 1;
+  const now = Date.now();
+
+  // Latest quality score per decision
+  const latestQuality = new Map<string, number>();
+  for (const a of analyses) {
+    if (!latestQuality.has(a.decision_id) && a.quality_score != null) {
+      latestQuality.set(a.decision_id, Number(a.quality_score));
+    }
+  }
+  const qualityValues = [...latestQuality.values()];
+  const avgQualityScore = qualityValues.length
+    ? Math.round(qualityValues.reduce((s, v) => s + v, 0) / qualityValues.length)
+    : null;
+
+  // Monthly quality trend (last 6 months)
+  const monthMap = new Map<string, { q: number[]; o: number[]; n: number }>();
+  for (let i = 5; i >= 0; i--) {
+    const d = new Date();
+    d.setMonth(d.getMonth() - i);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    monthMap.set(key, { q: [], o: [], n: 0 });
+  }
+  for (const d of decisions) {
+    const key = d.created_at.slice(0, 7);
+    const bucket = monthMap.get(key);
+    if (!bucket) continue;
+    bucket.n += 1;
+    const q = latestQuality.get(d.id);
+    if (q != null) bucket.q.push(q);
+    if (d.outcome_score != null) bucket.o.push(Number(d.outcome_score));
+  }
+  const qualityTrend: QualityTrendPoint[] = [...monthMap.entries()].map(([month, b]) => ({
+    month,
+    avgQuality: b.q.length ? Math.round(b.q.reduce((a, c) => a + c, 0) / b.q.length) : 0,
+    decisions: b.n,
+    avgOutcomeScore: b.o.length ? Math.round((b.o.reduce((a, c) => a + c, 0) / b.o.length) * 10) / 10 : null,
+  }));
+
+  // Patterns / bias-style signals
+  const patterns: DecisionPatternInsight[] = [];
+  const decided = decisions.filter((d) => d.decided_at);
+  const cycleDays = decided
+    .map((d) => (new Date(d.decided_at!).getTime() - new Date(d.created_at).getTime()) / 86400000)
+    .filter((n) => n >= 0);
+  const avgCycle = cycleDays.length ? cycleDays.reduce((a, b) => a + b, 0) / cycleDays.length : null;
+  if (avgCycle != null && avgCycle > 14) {
+    patterns.push({
+      id: 'slow-cycle',
+      kind: 'speed',
+      title: 'Slow decision cycle',
+      detail: `Average time to decide is ${avgCycle.toFixed(1)} days. Teams that decide under 7–10 days usually execute faster.`,
+      severity: avgCycle > 21 ? 'alert' : 'watch',
+      value: Math.round(avgCycle * 10) / 10,
+    });
+  }
+
+  const byDecisionVotes = new Map<string, { yes: number; no: number; total: number }>();
+  for (const v of votes) {
+    if (v.choice === 'needs_info') continue;
+    const cur = byDecisionVotes.get(v.decision_id) ?? { yes: 0, no: 0, total: 0 };
+    if (v.choice === 'yes') cur.yes += 1;
+    if (v.choice === 'no') cur.no += 1;
+    cur.total += 1;
+    byDecisionVotes.set(v.decision_id, cur);
+  }
+  const closeVotes = [...byDecisionVotes.values()].filter((t) => t.total >= 3 && Math.abs(t.yes - t.no) <= 1).length;
+  if (closeVotes >= 2) {
+    patterns.push({
+      id: 'split-alignment',
+      kind: 'alignment',
+      title: 'Frequent split votes',
+      detail: `${closeVotes} decisions had near-tied votes. Consider stronger framing or a clear decision owner before voting.`,
+      severity: 'watch',
+      value: closeVotes,
+    });
+  }
+
+  const voterIds = new Set(votes.map((v) => v.user_id));
+  const participation = Math.round((voterIds.size / memberCount) * 100);
+  if (memberCount >= 3 && participation < 40) {
+    patterns.push({
+      id: 'low-participation',
+      kind: 'participation',
+      title: 'Low voting participation',
+      detail: `Only ${participation}% of members have voted recently. Decisions may reflect a small subset of the team.`,
+      severity: participation < 25 ? 'alert' : 'watch',
+      value: participation,
+    });
+  }
+
+  const reversed = decisions.filter((d) => d.is_reversed).length;
+  if (reversed >= 1) {
+    patterns.push({
+      id: 'reversals',
+      kind: 'reversal',
+      title: 'Decision reversals',
+      detail: `${reversed} decision(s) were reversed. Review gate quality and evidence standards before locking outcomes.`,
+      severity: reversed >= 3 ? 'alert' : 'info',
+      value: reversed,
+    });
+  }
+
+  const overdue = actions.filter((a) => a.status !== 'done' && a.deadline && new Date(a.deadline).getTime() < now).length;
+  if (overdue >= 3) {
+    patterns.push({
+      id: 'overdue-actions',
+      kind: 'overdue',
+      title: 'Execution lag',
+      detail: `${overdue} actions are overdue. Decision quality drops when follow-through stalls.`,
+      severity: overdue >= 8 ? 'alert' : 'watch',
+      value: overdue,
+    });
+  }
+
+  if (avgQualityScore != null && avgQualityScore < 55) {
+    patterns.push({
+      id: 'low-quality',
+      kind: 'quality',
+      title: 'Below-target decision quality',
+      detail: `Average AI quality score is ${avgQualityScore}/100. Focus on evidence gaps and clearer recommendations.`,
+      severity: avgQualityScore < 40 ? 'alert' : 'watch',
+      value: avgQualityScore,
+    });
+  }
+
+  // Predictive risk: open decisions that look like past weak outcomes
+  const predictiveRisks: PredictiveRiskInsight[] = [];
+  const weakPast = decisions.filter((d) => d.outcome && (d.outcome_score != null && Number(d.outcome_score) <= 2 || d.is_reversed));
+  const openOnes = decisions.filter((d) => !d.outcome);
+  for (const open of openOnes.slice(0, 12)) {
+    const ageDays = (now - new Date(open.created_at).getTime()) / 86400000;
+    const q = latestQuality.get(open.id);
+    const tallies = byDecisionVotes.get(open.id);
+    const split = tallies && tallies.total >= 2 && Math.abs(tallies.yes - tallies.no) <= 1;
+    if (ageDays >= 10 || (q != null && q < 50) || split) {
+      predictiveRisks.push({
+        id: `pred-${open.id}`,
+        title: open.title,
+        reason:
+          ageDays >= 10
+            ? `Open for ${Math.round(ageDays)} days without an outcome — similar stalls often end in weak or reversed decisions.`
+            : q != null && q < 50
+              ? `Quality score ${q}/100 suggests missing evidence before you lock this in.`
+              : 'Vote is split; past split decisions in this workspace more often need revisiting.',
+        probabilityLabel: ageDays >= 14 || (q != null && q < 40) ? 'elevated' : 'moderate',
+        relatedDecisionId: open.id,
+      });
+    }
+  }
+  // Reference weak past count in similar win rate
+  const withOutcome = decisions.filter((d) => d.outcome);
+  const goodOutcomes = withOutcome.filter((d) => !d.is_reversed && (d.outcome_score == null || Number(d.outcome_score) >= 3)).length;
+  const similarWinRate = withOutcome.length ? Math.round((goodOutcomes / withOutcome.length) * 100) : null;
+
+  const postMortemReady = decisions.filter(
+    (d) => d.outcome && d.decided_at && (now - new Date(d.decided_at).getTime()) / 86400000 >= 30,
+  ).length;
+
+  return {
+    avgQualityScore,
+    qualityTrend,
+    patterns,
+    predictiveRisks: predictiveRisks.slice(0, 8),
+    similarWinRate,
+    postMortemReady,
+  };
+}
+
+/** Structured post-mortem from decision + outcome reviews + optional AI. */
+export async function generatePostMortem(decisionId: string, workspaceId: string): Promise<{
+  title: string;
+  summary: string;
+  whatWorked: string[];
+  whatFailed: string[];
+  lessons: string[];
+  qualityScore: number | null;
+  markdown: string;
+}> {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const credit = await consumeAiCredit(workspaceId, 1);
+  if (!credit.ok) throw new Error(credit.error || 'AI credit limit reached.');
+
+  const [decision, reviews, intelligence, history] = await Promise.all([
+    getDecision(decisionId),
+    getDecisionOutcomeHistory(decisionId),
+    getLatestDecisionIntelligence(decisionId),
+    listDecisionHistory(decisionId),
+  ]);
+  if (!decision) throw new Error('Decision not found.');
+
+  const whatWorked: string[] = [];
+  const whatFailed: string[] = [];
+  const lessons: string[] = [];
+
+  for (const r of reviews) {
+    if (r.lessons) lessons.push(r.lessons);
+    if (r.wasSuccessful === true && r.whatHappened) whatWorked.push(r.whatHappened);
+    if (r.wasSuccessful === false && r.whatHappened) whatFailed.push(r.whatHappened);
+  }
+  if (decision.isReversed) whatFailed.push(`Decision was reversed: ${decision.reversalReason || 'no reason recorded'}`);
+  if (intelligence?.evidenceGaps?.length) whatFailed.push(...intelligence.evidenceGaps.slice(0, 3));
+  if (intelligence?.strongestArguments?.length) whatWorked.push(...intelligence.strongestArguments.slice(0, 3));
+  if (intelligence?.recommendation) lessons.push(`AI recommendation at the time: ${intelligence.recommendation}`);
+  if (!whatWorked.length) whatWorked.push('Record explicit wins in the next outcome review.');
+  if (!whatFailed.length) whatFailed.push('No major failures logged yet — keep outcome reviews on schedule.');
+  if (!lessons.length) lessons.push('Capture one lesson within 30 days of every major decision.');
+
+  const summary =
+    intelligence?.executiveSummary ||
+    `${decision.title} ended as ${decision.outcome ?? 'open'}. ${history.length} history events and ${reviews.length} outcome reviews on record.`;
+
+  const markdown = [
+    `# Post-mortem — ${decision.title}`,
+    '',
+    `**Outcome:** ${decision.outcome ?? '—'}`,
+    `**Quality score:** ${intelligence?.qualityScore ?? '—'}`,
+    `**Decided:** ${decision.decidedAt ? new Date(decision.decidedAt).toLocaleString() : '—'}`,
+    '',
+    '## Summary',
+    summary,
+    '',
+    '## What worked',
+    ...whatWorked.map((x) => `- ${x}`),
+    '',
+    '## What failed / gaps',
+    ...whatFailed.map((x) => `- ${x}`),
+    '',
+    '## Lessons',
+    ...lessons.map((x) => `- ${x}`),
+    '',
+    '---',
+    `Generated by PULSE on ${new Date().toLocaleString()}`,
+  ].join('\n');
+
+  return {
+    title: decision.title,
+    summary,
+    whatWorked,
+    whatFailed,
+    lessons,
+    qualityScore: intelligence?.qualityScore ?? null,
+    markdown,
+  };
+}
+
 
 function mapDecisionIntelligence(row: Record<string, unknown>): DecisionIntelligence {
   const arrayOfStrings = (value: unknown) => Array.isArray(value) ? value.map(String).filter(Boolean) : [];
@@ -1009,52 +1426,112 @@ export async function createAction(workspaceId: string, input: CreateActionInput
   return created;
 }
 
+export async function updateActionStatus(actionId: string, status: ActionStatus) {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const { error } = await supabase.from('actions').update({ status, updated_at: new Date().toISOString() }).eq('id', actionId);
+  if (error) throw new Error(error.message);
+}
+
+// Phase 6: Execution Engine v2 — action dependencies and AI execution planning
+
+export async function listActionDependencies(workspaceId: string): Promise<ActionDependency[]> {
+  if (!supabase) return [];
+  const { data, error } = await supabase
+    .from('action_dependencies')
+    .select('id,workspace_id,action_id,depends_on_action_id,created_by,created_at')
+    .eq('workspace_id', workspaceId)
+    .order('created_at', { ascending: true });
+  if (error) throw new Error(error.message);
+  return (data ?? []).map((row) => ({
+    id: row.id,
+    workspaceId: row.workspace_id,
+    actionId: row.action_id,
+    dependsOnActionId: row.depends_on_action_id,
+    createdBy: row.created_by,
+    createdAt: row.created_at,
+  }));
+}
+
+export async function createActionDependency(
+  workspaceId: string,
+  actionId: string,
+  dependsOnActionId: string,
+  createdBy: string,
+): Promise<ActionDependency> {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  if (actionId === dependsOnActionId) throw new Error('An action cannot depend on itself.');
+  const { data, error } = await supabase
+    .from('action_dependencies')
+    .insert({
+      workspace_id: workspaceId,
+      action_id: actionId,
+      depends_on_action_id: dependsOnActionId,
+      created_by: createdBy,
+    })
+    .select('id,workspace_id,action_id,depends_on_action_id,created_by,created_at')
+    .single();
+  if (error) throw new Error(error.message);
+  return {
+    id: data.id,
+    workspaceId: data.workspace_id,
+    actionId: data.action_id,
+    dependsOnActionId: data.depends_on_action_id,
+    createdBy: data.created_by,
+    createdAt: data.created_at,
+  };
+}
+
+export async function deleteActionDependency(dependencyId: string): Promise<void> {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const { error } = await supabase.from('action_dependencies').delete().eq('id', dependencyId);
+  if (error) throw new Error(error.message);
+}
+
+export async function updateActionOwner(actionId: string, ownerId: string | null): Promise<void> {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const { error } = await supabase.from('actions').update({ owner_id: ownerId, updated_at: new Date().toISOString() }).eq('id', actionId);
+  if (error) throw new Error(error.message);
+}
+
 export async function requestExecutionPlan(decisionId: string): Promise<ExecutionPlanStep[]> {
   if (!supabase) throw new Error('Supabase is not configured.');
   const { data, error } = await supabase.functions.invoke('execution-plan', { body: { decisionId } });
   if (error) throw new Error(error.message);
-  if (data?.error) throw new Error(String(data.error));
-  return Array.isArray(data?.steps) ? data.steps : [];
+  if (data?.error) throw new Error(data.error);
+  if (!Array.isArray(data?.steps)) return [];
+  return data.steps.map((step: Record<string, unknown>, index: number): ExecutionPlanStep => ({
+    title: String(step.title ?? '').trim(),
+    rationale: String(step.rationale ?? '').trim(),
+    priority: (['low', 'medium', 'high'].includes(String(step.priority)) ? String(step.priority) : 'medium') as ActionPriority,
+    daysFromNow: Math.max(0, Math.min(30, Number(step.daysFromNow ?? index + 1))),
+    dependsOnIndex: step.dependsOnIndex == null ? null : Math.max(0, Math.min(index - 1, Number(step.dependsOnIndex))),
+  })).filter((step: ExecutionPlanStep) => Boolean(step.title));
 }
 
 export async function requestExecutionAutopilot(decisionId: string): Promise<ExecutionAutopilotAnalysis> {
   if (!supabase) throw new Error('Supabase is not configured.');
   const { data, error } = await supabase.functions.invoke('execution-autopilot', { body: { decisionId } });
   if (error) throw new Error(error.message);
-  if (data?.error) throw new Error(String(data.error));
-  return data as ExecutionAutopilotAnalysis;
-}
-
-export async function listActionDependencies(workspaceId: string): Promise<ActionDependency[]> {
-  if (!supabase) return [];
-  const { data, error } = await supabase.from('action_dependencies').select('id,workspace_id,action_id,depends_on_action_id,created_by,created_at').eq('workspace_id', workspaceId);
-  if (error) throw new Error(error.message);
-  return (data ?? []).map((r) => ({ id: r.id, workspaceId: r.workspace_id, actionId: r.action_id, dependsOnActionId: r.depends_on_action_id, createdBy: r.created_by, createdAt: r.created_at }));
-}
-
-export async function createActionDependency(workspaceId: string, actionId: string, dependsOnActionId: string, createdBy: string): Promise<ActionDependency> {
-  if (!supabase) throw new Error('Supabase is not configured.');
-  const { data, error } = await supabase.from('action_dependencies').insert({ workspace_id: workspaceId, action_id: actionId, depends_on_action_id: dependsOnActionId, created_by: createdBy }).select('id,workspace_id,action_id,depends_on_action_id,created_by,created_at').single();
-  if (error) throw new Error(error.message);
-  return { id: data.id, workspaceId: data.workspace_id, actionId: data.action_id, dependsOnActionId: data.depends_on_action_id, createdBy: data.created_by, createdAt: data.created_at };
-}
-
-export async function deleteActionDependency(dependencyId: string) {
-  if (!supabase) throw new Error('Supabase is not configured.');
-  const { error } = await supabase.from('action_dependencies').delete().eq('id', dependencyId);
-  if (error) throw new Error(error.message);
-}
-
-export async function updateActionOwner(actionId: string, ownerId: string | null) {
-  if (!supabase) throw new Error('Supabase is not configured.');
-  const { error } = await supabase.from('actions').update({ owner_id: ownerId, updated_at: new Date().toISOString() }).eq('id', actionId);
-  if (error) throw new Error(error.message);
-}
-
-export async function updateActionStatus(actionId: string, status: ActionStatus) {
-  if (!supabase) throw new Error('Supabase is not configured.');
-  const { error } = await supabase.from('actions').update({ status, updated_at: new Date().toISOString() }).eq('id', actionId);
-  if (error) throw new Error(error.message);
+  if (data?.error) throw new Error(data.error);
+  return {
+    decisionId: String(data?.decisionId ?? decisionId),
+    health: (['healthy', 'at-risk', 'critical'].includes(String(data?.health)) ? String(data.health) : 'at-risk') as ExecutionAutopilotAnalysis['health'],
+    headline: String(data?.headline ?? 'Execution needs review.'),
+    bottlenecks: Array.isArray(data?.bottlenecks) ? data.bottlenecks.map((b: Record<string, unknown>) => ({
+      actionId: String(b.actionId),
+      reason: String(b.reason ?? ''),
+      blockedCount: Math.max(0, Number(b.blockedCount ?? 0)),
+    })) : [],
+    interventions: Array.isArray(data?.interventions) ? data.interventions.map((i: Record<string, unknown>) => ({
+      kind: (['bottleneck', 'overdue', 'owner', 'deadline', 'dependency'].includes(String(i.kind)) ? String(i.kind) : 'dependency') as ExecutionAutopilotAnalysis['interventions'][number]['kind'],
+      title: String(i.title ?? 'Review execution'),
+      detail: String(i.detail ?? ''),
+      priority: (['low', 'medium', 'high'].includes(String(i.priority)) ? String(i.priority) : 'medium') as ActionPriority,
+      actionId: i.actionId ? String(i.actionId) : null,
+      suggestedAction: String(i.suggestedAction ?? 'Review and address the execution signal.'),
+    })) : [],
+    confidence: Math.max(0, Math.min(1, Number(data?.confidence ?? 0.7))),
+  };
 }
 
 // ============================================================================
@@ -1433,39 +1910,92 @@ export async function getWorkspaceSubscription(workspaceId: string): Promise<Wor
   return { plan: data.plan, status: data.status, currentPeriodEnd: data.current_period_end };
 }
 
-export async function startCheckout(workspaceId: string, plan: 'pro' | 'business', billingCycle: 'monthly' | 'yearly' = 'monthly'): Promise<{ url: string | null; error: string | null }> {
+export async function startCheckout(workspaceId: string, plan: 'starter' | 'pro' | 'business'): Promise<{ url: string | null; error: string | null }> {
   if (!supabase) return { url: null, error: 'Supabase is not configured.' };
-  const { data, error } = await supabase.functions.invoke('stripe-checkout', { body: { workspaceId, plan, billingCycle } });
-  if (error) {
-    // Supabase FunctionsHttpError often carries the Edge Function response in
-    // `context`. Surface the server's actual Stripe/setup message instead of
-    // the generic non-2xx error shown by the browser.
-    try {
-      const context = (error as unknown as { context?: Response }).context;
-      if (context instanceof Response) {
-        const body = await context.clone().json().catch(() => null) as { error?: string } | null;
-        if (body?.error) return { url: null, error: body.error };
-      }
-    } catch { /* fall back to the SDK error */ }
-    return { url: null, error: error.message };
-  }
+  const { data, error } = await supabase.functions.invoke('stripe-checkout', { body: { workspaceId, plan } });
+  if (error) return { url: null, error: error.message };
   return { url: data?.url ?? null, error: data?.error ?? null };
 }
 
 export async function openBillingPortal(workspaceId: string): Promise<{ url: string | null; error: string | null }> {
   if (!supabase) return { url: null, error: 'Supabase is not configured.' };
-  const { data, error } = await supabase.functions.invoke('stripe-billing-portal', { body: { workspaceId } });
+  const { data, error } = await supabase.functions.invoke('stripe-portal', { body: { workspaceId } });
   if (error) return { url: null, error: error.message };
   return { url: data?.url ?? null, error: data?.error ?? null };
 }
 
-export async function getWorkspaceBillingSummary(workspaceId: string): Promise<WorkspaceBillingSummary> {
-  if (!supabase) return { customerId: null, paymentMethod: null, invoices: [] };
-  const { data, error } = await supabase.functions.invoke('stripe-billing-summary', { body: { workspaceId } });
-  if (error) throw new Error(error.message);
-  if (data?.error) throw new Error(data.error);
-  return { customerId: data?.customerId ?? null, paymentMethod: data?.paymentMethod ?? null, invoices: data?.invoices ?? [] };
+/** Plan limits used for enforcement (seats, AI, history depth). */
+export const PLAN_LIMITS = {
+  free: { seats: 3, aiPerMonth: 20, historyDays: 30, label: 'Free' },
+  starter: { seats: 10, aiPerMonth: 100, historyDays: 90, label: 'Starter' },
+  pro: { seats: 50, aiPerMonth: 500, historyDays: 365, label: 'Pro' },
+  business: { seats: 500, aiPerMonth: 2000, historyDays: 3650, label: 'Business' },
+  enterprise: { seats: 10000, aiPerMonth: 10000, historyDays: 36500, label: 'Enterprise' },
+} as const;
+
+export type BillablePlan = keyof typeof PLAN_LIMITS;
+
+export interface PlanUsageSnapshot {
+  plan: BillablePlan;
+  seatsUsed: number;
+  seatsLimit: number;
+  aiUsed: number;
+  aiLimit: number;
+  aiBalance: number;
+  historyDays: number;
+  canInvite: boolean;
+  canUseAI: boolean;
 }
+
+export async function getPlanUsage(workspaceId: string): Promise<PlanUsageSnapshot> {
+  const empty: PlanUsageSnapshot = {
+    plan: 'free', seatsUsed: 0, seatsLimit: 3, aiUsed: 0, aiLimit: 20, aiBalance: 0, historyDays: 30, canInvite: true, canUseAI: true,
+  };
+  if (!supabase) return empty;
+
+  const [sub, members, credits] = await Promise.all([
+    supabase.from('workspace_subscriptions').select('plan,status').eq('workspace_id', workspaceId).maybeSingle(),
+    supabase.from('workspace_members').select('*', { count: 'exact', head: true }).eq('workspace_id', workspaceId),
+    supabase.from('workspace_ai_credits').select('balance,monthly_allowance,used_this_period').eq('workspace_id', workspaceId).maybeSingle(),
+  ]);
+
+  const plan = (sub.data?.plan as BillablePlan) || 'free';
+  const limits = PLAN_LIMITS[plan] ?? PLAN_LIMITS.free;
+  const seatsUsed = members.count ?? 0;
+  const aiUsed = credits.data?.used_this_period ?? 0;
+  const aiLimit = credits.data?.monthly_allowance ?? limits.aiPerMonth;
+  const aiBalance = credits.data?.balance ?? limits.aiPerMonth;
+
+  return {
+    plan,
+    seatsUsed,
+    seatsLimit: limits.seats,
+    aiUsed,
+    aiLimit,
+    aiBalance,
+    historyDays: limits.historyDays,
+    canInvite: seatsUsed < limits.seats,
+    canUseAI: aiUsed < aiLimit || aiBalance > 0,
+  };
+}
+
+/** Call before expensive AI operations. Returns false if over limit. */
+export async function consumeAiCredit(workspaceId: string, cost = 1): Promise<{ ok: boolean; error?: string }> {
+  if (!supabase) return { ok: false, error: 'Supabase is not configured.' };
+  const { data, error } = await supabase.rpc('consume_ai_credit', { p_workspace_id: workspaceId, p_cost: cost });
+  if (error) return { ok: false, error: error.message };
+  if (!data) return { ok: false, error: 'AI credit limit reached for this billing period. Upgrade your plan or wait for the next month.' };
+  return { ok: true };
+}
+
+export async function assertCanInvite(workspaceId: string): Promise<{ ok: boolean; error?: string }> {
+  const usage = await getPlanUsage(workspaceId);
+  if (!usage.canInvite) {
+    return { ok: false, error: `Seat limit reached (${usage.seatsUsed}/${usage.seatsLimit} on ${usage.plan}). Upgrade to invite more people.` };
+  }
+  return { ok: true };
+}
+
 
 // ============================================================================
 // Phase 6: Integrations
@@ -1779,50 +2309,19 @@ export async function deleteWorkspace(workspaceId: string) {
   if (error) throw new Error(error.message);
 }
 
-export async function getWorkspaceUsageSnapshot(workspaceId: string): Promise<WorkspaceUsageSnapshot> {
-  const fallback: WorkspaceUsageSnapshot = {
-    activeMembers: 0, discussionsCreated: 0, decisionsMade: 0, pollsCreated: 0,
-    aiAnalysesRun: 0, automationsRun: 0, plan: 'free', memberLimit: 5, aiAnalysesLimit: 20,
-    automationsLimit: 0, periodStart: new Date().toISOString(),
-  };
-  if (!supabase) return fallback;
-  const { data, error } = await supabase.rpc('workspace_usage_snapshot', { workspace_id_input: workspaceId });
-  if (error) throw new Error(error.message);
-  if (!data) return fallback;
-  return {
-    activeMembers: Number(data.activeMembers ?? 0),
-    discussionsCreated: Number(data.discussionsCreated ?? 0),
-    decisionsMade: Number(data.decisionsMade ?? 0),
-    pollsCreated: Number(data.pollsCreated ?? 0),
-    aiAnalysesRun: Number(data.aiAnalysesRun ?? 0),
-    automationsRun: Number(data.automationsRun ?? 0),
-    plan: data.plan ?? 'free',
-    memberLimit: data.memberLimit == null ? null : Number(data.memberLimit),
-    aiAnalysesLimit: data.aiAnalysesLimit == null ? null : Number(data.aiAnalysesLimit),
-    automationsLimit: data.automationsLimit == null ? null : Number(data.automationsLimit),
-    periodStart: data.periodStart ?? new Date().toISOString(),
-  };
-}
-
 export async function getWorkspaceUsage(workspaceId: string): Promise<WorkspaceUsage> {
   const empty: WorkspaceUsage = { activeMembers: 0, discussionsCreated: 0, decisionsMade: 0, pollsCreated: 0, aiAnalysesRun: 0, automationsRun: 0 };
   if (!supabase) return empty;
-
-  const [members, discussions, decisions, polls, snapshot] = await Promise.all([
+  const [members, discussions, decisions, polls, ai] = await Promise.all([
     supabase.from('workspace_members').select('*', { count: 'exact', head: true }).eq('workspace_id', workspaceId),
     supabase.from('discussions').select('*', { count: 'exact', head: true }).eq('workspace_id', workspaceId),
     supabase.from('decisions').select('*', { count: 'exact', head: true }).eq('workspace_id', workspaceId),
     supabase.from('polls').select('*', { count: 'exact', head: true }).eq('workspace_id', workspaceId),
-    supabase.rpc('workspace_usage_snapshot', { workspace_id_input: workspaceId }),
+    supabase.from('decision_ai_analyses').select('id,decisions!inner(workspace_id)', { count: 'exact', head: true }).eq('decisions.workspace_id', workspaceId),
   ]);
-  if (snapshot.error) throw new Error(snapshot.error.message);
   return {
-    activeMembers: members.count ?? Number(snapshot.data?.activeMembers ?? 0),
-    discussionsCreated: discussions.count ?? 0,
-    decisionsMade: decisions.count ?? 0,
-    pollsCreated: polls.count ?? 0,
-    aiAnalysesRun: Number(snapshot.data?.aiAnalysesRun ?? 0),
-    automationsRun: Number(snapshot.data?.automationsRun ?? 0),
+    activeMembers: members.count ?? 0, discussionsCreated: discussions.count ?? 0, decisionsMade: decisions.count ?? 0,
+    pollsCreated: polls.count ?? 0, aiAnalysesRun: ai.count ?? 0, automationsRun: 0,
   };
 }
 

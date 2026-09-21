@@ -1,12 +1,16 @@
 {
   "name": "PULSE — Decision OS",
   "short_name": "PULSE",
-  "description": "Where teams think, decide, and move forward — together with AI.",
+  "description": "AI-powered team decision workspace. Capture context, force clarity, track outcomes.",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
+  "orientation": "any",
   "background_color": "#06070d",
-  "theme_color": "#06070d",
+  "theme_color": "#0b0f1a",
+  "categories": ["business", "productivity"],
   "icons": [
-    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
   ]
 }

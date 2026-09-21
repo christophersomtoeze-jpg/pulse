@@ -1,122 +1,102 @@
-// Supabase Edge Function: stripe-checkout
-// Creates a Stripe Checkout subscription for a workspace admin.
-// Required secrets: STRIPE_SECRET_KEY, STRIPE_PRICE_PRO_MONTHLY, STRIPE_PRICE_PRO_YEARLY, STRIPE_PRICE_BUSINESS_MONTHLY, STRIPE_PRICE_BUSINESS_YEARLY.
-// Optional: APP_URL for stable success/cancel URLs.
+// Stripe Checkout — Starter / Pro / Business subscriptions
+// Secrets: STRIPE_SECRET_KEY, STRIPE_PRICE_STARTER, STRIPE_PRICE_PRO, STRIPE_PRICE_BUSINESS
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
 
 const STRIPE_SECRET_KEY = Deno.env.get('STRIPE_SECRET_KEY');
-const STRIPE_PRICE_PRO_MONTHLY = Deno.env.get('STRIPE_PRICE_PRO_MONTHLY') || Deno.env.get('STRIPE_PRICE_PRO');
-const STRIPE_PRICE_PRO_YEARLY = Deno.env.get('STRIPE_PRICE_PRO_YEARLY');
-const STRIPE_PRICE_BUSINESS_MONTHLY = Deno.env.get('STRIPE_PRICE_BUSINESS_MONTHLY') || Deno.env.get('STRIPE_PRICE_BUSINESS');
-const STRIPE_PRICE_BUSINESS_YEARLY = Deno.env.get('STRIPE_PRICE_BUSINESS_YEARLY');
+const STRIPE_PRICE_STARTER = Deno.env.get('STRIPE_PRICE_STARTER');
+const STRIPE_PRICE_PRO = Deno.env.get('STRIPE_PRICE_PRO');
+const STRIPE_PRICE_BUSINESS = Deno.env.get('STRIPE_PRICE_BUSINESS');
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!;
-const APP_URL = (Deno.env.get('APP_URL') || '').replace(/\/$/, '');
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
-const json = (body: unknown, status = 200) =>
-  new Response(JSON.stringify(body), { status, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } });
+function json(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), { status, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } });
+}
+
+type Plan = 'starter' | 'pro' | 'business';
+
+function priceFor(plan: Plan): string | undefined {
+  if (plan === 'starter') return STRIPE_PRICE_STARTER;
+  if (plan === 'pro') return STRIPE_PRICE_PRO;
+  return STRIPE_PRICE_BUSINESS;
+}
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS_HEADERS });
-  if (req.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
+  if (!STRIPE_SECRET_KEY) return json({ error: 'Billing is not connected yet — set STRIPE_SECRET_KEY.' }, 500);
 
   try {
-    if (!STRIPE_SECRET_KEY) return json({ error: 'Billing is not connected: STRIPE_SECRET_KEY is missing.' }, 500);
     const authHeader = req.headers.get('Authorization');
     if (!authHeader) return json({ error: 'Missing Authorization header' }, 401);
 
     const body = await req.json();
-    const workspaceId = typeof body?.workspaceId === 'string' ? body.workspaceId : '';
-    const plan = body?.plan === 'pro' || body?.plan === 'business' ? body.plan : null;
-    const billingCycle = body?.billingCycle === 'yearly' ? 'yearly' : 'monthly';
-    if (!workspaceId || !plan) return json({ error: 'workspaceId and a valid plan are required' }, 400);
+    const workspaceId = body.workspaceId as string;
+    const plan = body.plan as Plan;
+    if (!workspaceId || !['starter', 'pro', 'business'].includes(plan)) {
+      return json({ error: 'workspaceId and plan (starter|pro|business) are required' }, 400);
+    }
 
-    const caller = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { global: { headers: { Authorization: authHeader } } });
-    const { data: userData } = await caller.auth.getUser();
-    if (!userData.user) return json({ error: 'Not authenticated' }, 401);
+    const priceId = priceFor(plan);
+    if (!priceId) return json({ error: `STRIPE_PRICE_${plan.toUpperCase()} is not set` }, 500);
 
-    const { data: membership } = await caller
-      .from('workspace_members')
-      .select('role')
-      .eq('workspace_id', workspaceId)
-      .eq('user_id', userData.user.id)
-      .maybeSingle();
-    if (!membership || !['owner', 'admin'].includes(String(membership.role))) return json({ error: 'Only workspace owners and admins can manage billing.' }, 403);
-
-    const { data: ws } = await caller.from('workspaces').select('id,name').eq('id', workspaceId).maybeSingle();
-    if (!ws) return json({ error: 'Workspace not found.' }, 404);
-
-    const priceId = plan === 'pro'
-      ? (billingCycle === 'yearly' ? STRIPE_PRICE_PRO_YEARLY : STRIPE_PRICE_PRO_MONTHLY)
-      : (billingCycle === 'yearly' ? STRIPE_PRICE_BUSINESS_YEARLY : STRIPE_PRICE_BUSINESS_MONTHLY);
-    if (!priceId) return json({ error: `Stripe ${plan} ${billingCycle} price is not configured. Add the matching Supabase secret.` }, 500);
-
-    // Validate the configured Price before creating Checkout. This catches the
-    // most common setup mistakes (wrong mode, wrong Price ID, one-time price,
-    // or a monthly/yearly mismatch) with a useful error instead of a generic
-    // "Edge Function returned a non-2xx status code" message in the browser.
-    const priceRes = await fetch(`https://api.stripe.com/v1/prices/${encodeURIComponent(priceId)}`, {
-      method: 'GET',
-      headers: { Authorization: `Bearer ${STRIPE_SECRET_KEY}` },
+    const callerClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+      global: { headers: { Authorization: authHeader } },
     });
-    const priceText = await priceRes.text();
-    if (!priceRes.ok) {
-      let message = `Stripe could not read Price ${priceId}.`;
-      try {
-        const parsed = JSON.parse(priceText);
-        message = parsed?.error?.message || message;
-      } catch { /* keep fallback */ }
-      return json({ error: message }, 500);
-    }
-    const price = JSON.parse(priceText);
-    const expectedInterval = billingCycle === 'yearly' ? 'year' : 'month';
-    if (price?.active !== true) return json({ error: `Stripe Price ${priceId} is inactive.` }, 500);
-    if (price?.type !== 'recurring' || price?.recurring?.interval !== expectedInterval) {
-      return json({ error: `Stripe Price ${priceId} is not a recurring ${billingCycle} Price. Check the Price ID configured for ${plan} ${billingCycle}.` }, 500);
-    }
+    const { data: userData } = await callerClient.auth.getUser();
+    if (!userData?.user) return json({ error: 'Not authenticated' }, 401);
 
-    const successBase = APP_URL || req.headers.get('origin') || 'http://localhost:5173';
+    const { data: ws } = await callerClient.from('workspaces').select('id,name').eq('id', workspaceId).maybeSingle();
+    if (!ws) return json({ error: 'Not a member of this workspace' }, 403);
+
+    const origin = req.headers.get('origin') ?? '';
     const params = new URLSearchParams({
       mode: 'subscription',
       'line_items[0][price]': priceId,
       'line_items[0][quantity]': '1',
-      success_url: `${successBase}/?checkout=success`,
-      cancel_url: `${successBase}/?checkout=cancelled`,
+      success_url: `${origin}/?checkout=success&plan=${plan}`,
+      cancel_url: `${origin}/?checkout=cancelled`,
       client_reference_id: workspaceId,
-      'subscription_data[metadata][workspace_id]': workspaceId,
-      'subscription_data[metadata][plan]': plan,
-      'subscription_data[metadata][billing_cycle]': billingCycle,
       'metadata[workspace_id]': workspaceId,
       'metadata[plan]': plan,
-      'metadata[billing_cycle]': billingCycle,
+      'subscription_data[metadata][workspace_id]': workspaceId,
+      'subscription_data[metadata][plan]': plan,
     });
 
-    if (userData.user.email) params.set('customer_email', userData.user.email);
+    // Reuse existing Stripe customer when present
+    const { data: existing } = await callerClient
+      .from('workspace_subscriptions')
+      .select('stripe_customer_id')
+      .eq('workspace_id', workspaceId)
+      .maybeSingle();
+    if (existing?.stripe_customer_id) {
+      params.set('customer', existing.stripe_customer_id);
+    } else if (userData.user.email) {
+      params.set('customer_email', userData.user.email);
+    }
 
     const stripeRes = await fetch('https://api.stripe.com/v1/checkout/sessions', {
       method: 'POST',
-      headers: { Authorization: `Bearer ${STRIPE_SECRET_KEY}`, 'Content-Type': 'application/x-www-form-urlencoded' },
+      headers: {
+        Authorization: `Bearer ${STRIPE_SECRET_KEY}`,
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
       body: params.toString(),
     });
-    const stripeBody = await stripeRes.text();
+
     if (!stripeRes.ok) {
-      let message = `Stripe could not start checkout (HTTP ${stripeRes.status}).`;
-      try {
-        const parsed = JSON.parse(stripeBody);
-        message = parsed?.error?.message || message;
-      } catch { /* keep fallback */ }
-      return json({ error: message }, 502);
+      const text = await stripeRes.text();
+      return json({ error: `Stripe error: ${text.slice(0, 300)}` }, 500);
     }
-    const session = JSON.parse(stripeBody);
-    return json({ url: session.url ?? null });
+
+    const session = await stripeRes.json();
+    return json({ url: session.url });
   } catch (err) {
-    return json({ error: err instanceof Error ? err.message : 'Unable to start checkout.' }, 500);
+    return json({ error: err instanceof Error ? err.message : 'Unknown error' }, 500);
   }
 });
