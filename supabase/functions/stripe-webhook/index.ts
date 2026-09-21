@@ -49,7 +49,7 @@ async function verifyStripeSignature(
   const age = Math.abs(Math.floor(Date.now() / 1000) - Number(timestamp));
   if (Number.isNaN(age) || age > 300) return false;
 
-  const signedPayload = `\( {timestamp}. \){rawBody}`;
+  const signedPayload = `${timestamp}.${rawBody}`;
   const key = await crypto.subtle.importKey(
     'raw',
     new TextEncoder().encode(secret),

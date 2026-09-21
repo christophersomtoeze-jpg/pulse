@@ -11,6 +11,8 @@ interface AuthContextValue {
   loading: boolean;
   configured: boolean;
   signIn: (email: string, password: string) => Promise<{ error: string | null; needsConfirmation?: boolean }>;
+  resetPassword: (email: string) => Promise<{ error: string | null }>;
+  updatePassword: (password: string) => Promise<{ error: string | null }>;
   signUp: (email: string, password: string, name: string) => Promise<{ error: string | null; needsConfirmation?: boolean }>;
   signInWithOAuth: (provider: OAuthProvider) => Promise<{ error: string | null }>;
   signInWithSSO: (domain: string) => Promise<{ error: string | null }>;
@@ -48,6 +50,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     user: session?.user ?? null,
     loading,
     configured: isSupabaseConfigured,
+    updatePassword: async (password) => {
+      if (!supabase) return { error: 'Supabase is not configured yet.' };
+      const { error } = await supabase.auth.updateUser({ password });
+      return { error: error?.message ?? null };
+    },
+    resetPassword: async (email) => {
+      if (!supabase) return { error: 'Supabase is not configured yet.' };
+      const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: `${window.location.origin}/reset-password` });
+      return { error: error?.message ?? null };
+    },
     signIn: async (email, password) => {
       if (!supabase) return { error: 'Supabase is not configured yet. Add your VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY.' };
       const { error } = await supabase.auth.signInWithPassword({ email, password });

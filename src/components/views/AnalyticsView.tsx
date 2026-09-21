@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Activity, AlertOctagon, ArrowDownRight, ArrowUpRight, CheckCircle2, Clock3, Gauge, PieChart, Target, TrendingUp, Users } from 'lucide-react';
-import { computeAnalytics, computeIntelligenceInsights, generatePostMortem, type IntelligenceInsights } from '@/lib/pulseApi';
+import { computeAnalytics, computeIntelligenceInsights, type IntelligenceInsights } from '@/lib/pulseApi';
 import type { AnalyticsSnapshot } from '@/types';
 
 function StatCard({ icon: Icon, value, label, hint }: { icon: typeof Clock3; value: string; label: string; hint?: string }) {
@@ -34,8 +34,6 @@ export function AnalyticsView({ workspaceId, onOpenDecision }: { workspaceId: st
   const [intel, setIntel] = useState<IntelligenceInsights | null>(null);
   const [error, setError] = useState('');
   const [refreshing, setRefreshing] = useState(false);
-  const [pmBusy, setPmBusy] = useState(false);
-  const [pmNotice, setPmNotice] = useState('');
 
   const refresh = async () => {
     setRefreshing(true);
@@ -212,9 +210,8 @@ export function AnalyticsView({ workspaceId, onOpenDecision }: { workspaceId: st
             <div className="glass rounded-2xl p-4">
               <h3 className="text-sm font-semibold">Automated post-mortems</h3>
               <p className="mt-1 text-[11px] text-ink-400">
-                {intel.postMortemReady} decision(s) are past 30 days since outcome — open a Decision Room and run intelligence, or use generatePostMortem from the API for a full markdown brief.
+                {intel.postMortemReady} decision(s) are past 30 days since outcome — open a Decision Room and run intelligence,.
               </p>
-              {pmNotice && <p className="mt-2 text-xs text-flux-400">{pmNotice}</p>}
             </div>
           )}
         </>

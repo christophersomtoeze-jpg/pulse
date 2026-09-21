@@ -264,7 +264,7 @@ Deno.serve(async (req: Request) => {
   // --------------------------------------------------
   const discussionTitle = `${hook.name} (webhook)`;
 
-  let {
+  const {
     data: discussion,
     error: discussionLookupError,
   } = await admin

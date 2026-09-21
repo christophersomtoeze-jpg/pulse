@@ -1128,7 +1128,6 @@ export async function computeIntelligenceInsights(workspaceId: string): Promise<
 
   // Predictive risk: open decisions that look like past weak outcomes
   const predictiveRisks: PredictiveRiskInsight[] = [];
-  const weakPast = decisions.filter((d) => d.outcome && (d.outcome_score != null && Number(d.outcome_score) <= 2 || d.is_reversed));
   const openOnes = decisions.filter((d) => !d.outcome);
   for (const open of openOnes.slice(0, 12)) {
     const ageDays = (now - new Date(open.created_at).getTime()) / 86400000;

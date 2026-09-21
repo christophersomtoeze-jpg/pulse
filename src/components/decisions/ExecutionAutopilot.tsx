@@ -1,12 +1,12 @@
 import { useMemo, useState } from 'react';
-import { Activity, AlertTriangle, CheckCircle2, Clock3, Play, UserRound, Zap, BrainCircuit } from 'lucide-react';
+import { Activity, AlertTriangle, CheckCircle2, Play, Zap, BrainCircuit } from 'lucide-react';
 import { requestExecutionAutopilot, updateActionStatus, updateActionOwner, type WorkspaceMember } from '@/lib/pulseApi';
 import type { DecisionSummary, WorkspaceAction, ActionStatus, ActionDependency, ExecutionAutopilotAnalysis } from '@/types';
 
 interface Props { decision: DecisionSummary; actions: WorkspaceAction[]; members: WorkspaceMember[]; userId: string; onChanged: () => void; dependencies?: ActionDependency[]; }
 type Signal = { id: string; kind: 'overdue' | 'stalled' | 'unassigned' | 'deadline'; title: string; detail: string; actionId?: string };
 
-export function ExecutionAutopilot({ decision, actions, members, userId, onChanged, dependencies = [] }: Props) {
+export function ExecutionAutopilot({ decision, actions, members, onChanged, dependencies = [] }: Props) {
   const [busy, setBusy] = useState<string | null>(null);
   const [analysis, setAnalysis] = useState<ExecutionAutopilotAnalysis | null>(null);
   const [aiBusy, setAiBusy] = useState(false);

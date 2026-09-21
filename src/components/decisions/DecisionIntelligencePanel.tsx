@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import type { ReactNode } from 'react';
 import { AlertTriangle, BrainCircuit, CheckCircle2, Link2, ShieldAlert, Sparkles, Target, Zap } from 'lucide-react';
-import type { DecisionIntelligence, DecisionLink, DecisionRelationshipType } from '@/types';
+import type { DecisionIntelligence, DecisionRelationshipType } from '@/types';
 import { createDecisionLink, requestDecisionIntelligence } from '@/lib/pulseApi';
 
 const riskClass: Record<DecisionIntelligence['riskLevel'], string> = {

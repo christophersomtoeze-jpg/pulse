@@ -27,7 +27,7 @@ function PulseWave() {
 }
 
 export function AuthScreen() {
-  const { signIn, signUp, signInWithOAuth, signInWithSSO, configured } = useAuth();
+  const { signIn, signUp, resetPassword, signInWithOAuth, signInWithSSO, configured } = useAuth();
   const { t } = useTranslation();
   const [mode, setMode] = useState<'login' | 'signup'>('login');
   const [email, setEmail] = useState('');
@@ -126,7 +126,14 @@ export function AuthScreen() {
             <div>
               <div className="flex items-center justify-between">
                 <label className="text-xs font-medium text-ink-400">{t('auth_password')}</label>
-                {mode === 'login' && <button type="button" className="text-xs font-medium text-pulse-300">Forgot password?</button>}
+                {mode === 'login' && <button type="button" disabled={!configured || busy} onClick={async () => {
+                  const target = email.trim() || window.prompt('Enter the email address for your PULSE account:')?.trim() || '';
+                  if (!target) return;
+                  setError(''); setNotice(''); setBusy(true);
+                  const result = await resetPassword(target);
+                  if (result.error) setError(result.error); else setNotice('Password reset instructions have been sent if that email belongs to a PULSE account.');
+                  setBusy(false);
+                }} className="text-xs font-medium text-pulse-300 disabled:opacity-40">Forgot password?</button>}
               </div>
               <div className="relative mt-1.5">
                 <Lock className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-500" />

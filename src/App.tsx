@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { FolderOpen, Send, Sparkles, Users, X } from 'lucide-react';
+import { FolderOpen, LockKeyhole, Send, Sparkles, Users, X } from 'lucide-react';
 import { AuthProvider, useAuth } from '@/auth/AuthProvider';
 import { AuthScreen } from '@/components/auth/AuthScreen';
 import { TeamView } from '@/components/TeamPanel';
@@ -492,6 +492,40 @@ function AppShell() {
   );
 }
 
+function ResetPasswordPage() {
+  const { updatePassword } = useAuth();
+  const [password, setPassword] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [done, setDone] = useState(false);
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    setError('');
+    if (password.length < 8) { setError('Password must be at least 8 characters.'); return; }
+    if (password !== confirm) { setError('Passwords do not match.'); return; }
+    setBusy(true);
+    const result = await updatePassword(password);
+    if (result.error) setError(result.error); else setDone(true);
+    setBusy(false);
+  };
+
+  return <div className="min-h-screen grid place-items-center px-5 py-10">
+    <form onSubmit={submit} className="glass-strong w-full max-w-md rounded-3xl p-6">
+      <div className="h-11 w-11 rounded-2xl bg-gradient-to-br from-[#7c3aed] to-[#06b6d4] grid place-items-center shadow-glow"><LockKeyhole className="text-white" /></div>
+      <h1 className="mt-5 font-display text-2xl font-semibold">Set a new password</h1>
+      {done ? <><p className="mt-2 text-sm text-flux-300">Your password has been updated. You can return to PULSE and sign in with your new password.</p><a href="/" className="primary-btn mt-5 inline-flex">Return to PULSE</a></> : <>
+        <p className="mt-2 text-sm text-ink-400">Choose a new password for your PULSE account.</p>
+        <label className="mt-5 block text-xs text-ink-400">New password<input required minLength={8} type="password" value={password} onChange={e=>setPassword(e.target.value)} className="field mt-1.5" /></label>
+        <label className="mt-3 block text-xs text-ink-400">Confirm password<input required minLength={8} type="password" value={confirm} onChange={e=>setConfirm(e.target.value)} className="field mt-1.5" /></label>
+        {error && <p className="mt-3 text-sm text-ember-400">{error}</p>}
+        <button disabled={busy} className="primary-btn mt-5 w-full justify-center disabled:opacity-40">{busy ? 'Updating…' : 'Update password'}</button>
+      </>}
+    </form>
+  </div>;
+}
+
 function AppInner() {
   const { loading, user } = useAuth();
   const [setup, setSetup] = useState(false);
@@ -513,5 +547,5 @@ export default function App() {
   if (path === '/terms') return <TermsPage />;
   if (path === '/privacy') return <PrivacyPage />;
   if (path === '/security') return <SecurityPage />;
-  return <AuthProvider><AppInner /></AuthProvider>;
+  return <AuthProvider>{path === '/reset-password' ? <ResetPasswordPage /> : <AppInner />}</AuthProvider>;
 }
