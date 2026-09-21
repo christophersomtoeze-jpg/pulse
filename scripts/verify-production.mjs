@@ -10,6 +10,7 @@ const requiredFiles = [
   'supabase/migrations/20260913_execution_engine_v2.sql',
   'supabase/migrations/20260914_server_usage_enforcement.sql',
   'supabase/migrations/20260915_launch_hardening.sql',
+  'supabase/migrations/20260916_production_billing_reliability.sql',
   'supabase/functions/stripe-checkout/index.ts',
   'supabase/functions/stripe-webhook/index.ts',
   'supabase/functions/stripe-portal/index.ts',
@@ -17,7 +18,7 @@ const requiredFiles = [
 
 const env = process.env;
 const requiredEnv = ['VITE_SUPABASE_URL', 'VITE_SUPABASE_ANON_KEY'];
-const serverEnv = ['SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY', 'STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET'];
+const serverEnv = ['SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY', 'STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET', 'APP_URL'];
 const priceEnv = ['STRIPE_PRICE_STARTER', 'STRIPE_PRICE_PRO', 'STRIPE_PRICE_BUSINESS'];
 
 let failed = false;
@@ -32,7 +33,7 @@ for (const key of priceEnv) env[key] ? ok(`Stripe price configured: ${key}`) : c
 const checkout = readFileSync(resolve(root, 'supabase/functions/stripe-checkout/index.ts'), 'utf8');
 checkout.includes("membership.role !== 'owner'") ? ok('checkout restricted to workspace owner/admin') : fail('checkout authorization hardening missing');
 const webhook = readFileSync(resolve(root, 'supabase/functions/stripe-webhook/index.ts'), 'utf8');
-webhook.includes('stripe_webhook_events') && webhook.includes('23505') ? ok('Stripe webhook idempotency enabled') : fail('Stripe webhook idempotency missing');
+webhook.includes('stripe_webhook_events') && webhook.includes('23505') && webhook.includes('processing_status') ? ok('Stripe webhook idempotency/retry state enabled') : fail('Stripe webhook reliability hardening missing');
 
 if (failed) process.exit(1);
 console.log('\nProduction verification checks passed. Missing server secrets are expected locally; set them in Supabase/Vercel before deployment.');

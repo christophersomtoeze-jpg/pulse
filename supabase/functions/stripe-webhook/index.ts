@@ -42,8 +42,12 @@ async function verifyStripeSignature(
     }),
   );
   const timestamp = parts['t'];
-  const v1 = parts['v1'];
-  if (!timestamp || !v1) return false;
+  const signatures = signatureHeader
+    .split(',')
+    .filter((part) => part.trim().startsWith('v1='))
+    .map((part) => part.split('=')[1]?.trim())
+    .filter((value): value is string => Boolean(value));
+  if (!timestamp || signatures.length === 0) return false;
 
   // Reject stale timestamps (5 minutes)
   const age = Math.abs(Math.floor(Date.now() / 1000) - Number(timestamp));
@@ -63,10 +67,12 @@ async function verifyStripeSignature(
     .join('');
 
   // Constant-time-ish compare
-  if (hex.length !== v1.length) return false;
-  let ok = 0;
-  for (let i = 0; i < hex.length; i++) ok |= hex.charCodeAt(i) ^ v1.charCodeAt(i);
-  return ok === 0;
+  return signatures.some((v1) => {
+    if (hex.length !== v1.length) return false;
+    let ok = 0;
+    for (let i = 0; i < hex.length; i++) ok |= hex.charCodeAt(i) ^ v1.charCodeAt(i);
+    return ok === 0;
+  });
 }
 
 async function stripeGet(path: string): Promise<Record<string, unknown> | null> {
@@ -79,6 +85,7 @@ async function stripeGet(path: string): Promise<Record<string, unknown> | null> 
 }
 
 Deno.serve(async (req) => {
+  let eventId = '';
   if (!STRIPE_SECRET_KEY || !STRIPE_WEBHOOK_SECRET) {
     return new Response(
       'Billing is not connected — set STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET.',
@@ -103,22 +110,44 @@ Deno.serve(async (req) => {
 
   const admin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-  // Stripe retries webhook delivery. Record the event before applying state so
-  // the same event cannot credit a workspace twice or replay a cancellation.
-  const eventId = typeof (event as { id?: unknown }).id === 'string' ? (event as { id: string }).id : '';
+  // Stripe retries webhook delivery. Claim the event before applying state.
+  // Failed events remain retryable; successfully processed events are ignored.
+  eventId = typeof (event as { id?: unknown }).id === 'string' ? (event as { id: string }).id : '';
   if (!eventId) return new Response('Missing Stripe event id', { status: 400 });
-  const { error: eventInsertError } = await admin
+
+  const { data: existingEvent } = await admin
     .from('stripe_webhook_events')
-    .insert({ event_id: eventId, event_type: event.type });
-  if (eventInsertError) {
-    if (eventInsertError.code === '23505') {
-      return new Response(JSON.stringify({ received: true, duplicate: true }), {
-        headers: { 'Content-Type': 'application/json' },
-      });
-    }
-    return new Response('Unable to record webhook event', { status: 500 });
+    .select('processing_status,attempt_count')
+    .eq('event_id', eventId)
+    .maybeSingle();
+
+  if (existingEvent?.processing_status === 'processed') {
+    return new Response(JSON.stringify({ received: true, duplicate: true }), {
+      headers: { 'Content-Type': 'application/json' },
+    });
   }
 
+  if (existingEvent) {
+    const { error: claimError } = await admin
+      .from('stripe_webhook_events')
+      .update({ processing_status: 'processing', attempt_count: Number(existingEvent.attempt_count ?? 0) + 1, last_error: null })
+      .eq('event_id', eventId);
+    if (claimError) return new Response('Unable to claim webhook event', { status: 500 });
+  } else {
+    const { error: eventInsertError } = await admin
+      .from('stripe_webhook_events')
+      .insert({ event_id: eventId, event_type: event.type, processing_status: 'processing', attempt_count: 1 });
+    if (eventInsertError) {
+      if (eventInsertError.code === '23505') {
+        return new Response(JSON.stringify({ received: true, retry: true }), {
+          status: 202, headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response('Unable to record webhook event', { status: 500 });
+    }
+  }
+
+  try {
   const ensureCredits = async (workspaceId: string, plan: string) => {
     const allowance = PLAN_ALLOWANCE[plan] ?? 20;
     await admin.from('workspace_ai_credits').upsert({
@@ -199,7 +228,19 @@ Deno.serve(async (req) => {
     }
   }
 
-  return new Response(JSON.stringify({ received: true }), {
-    headers: { 'Content-Type': 'application/json' },
-  });
+    await admin
+      .from('stripe_webhook_events')
+      .update({ processing_status: 'processed', processed_at: new Date().toISOString(), last_error: null })
+      .eq('event_id', eventId);
+
+    return new Response(JSON.stringify({ received: true }), {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  } catch (err) {
+    await admin.from('stripe_webhook_events').update({
+      processing_status: 'failed',
+      last_error: err instanceof Error ? err.message.slice(0, 1000) : 'Unknown error',
+    }).eq('event_id', eventId);
+    return new Response('Webhook processing failed', { status: 500 });
+  }
 });

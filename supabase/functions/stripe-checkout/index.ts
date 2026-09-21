@@ -9,14 +9,20 @@ const STRIPE_PRICE_PRO = Deno.env.get('STRIPE_PRICE_PRO');
 const STRIPE_PRICE_BUSINESS = Deno.env.get('STRIPE_PRICE_BUSINESS');
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!;
+const APP_URL = Deno.env.get('APP_URL') ?? Deno.env.get('SITE_URL') ?? '';
 
-const CORS_HEADERS = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+function corsHeaders(req: Request) {
+  const origin = req.headers.get('origin');
+  const allowed = APP_URL && origin === APP_URL ? origin : APP_URL || '*';
+  return {
+    'Access-Control-Allow-Origin': allowed,
+    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+    'Vary': 'Origin',
+  };
+}
 
-function json(body: unknown, status = 200) {
-  return new Response(JSON.stringify(body), { status, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } });
+function json(req: Request, body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), { status, headers: { ...corsHeaders(req), 'Content-Type': 'application/json' } });
 }
 
 type Plan = 'starter' | 'pro' | 'business';
@@ -28,28 +34,28 @@ function priceFor(plan: Plan): string | undefined {
 }
 
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS_HEADERS });
-  if (!STRIPE_SECRET_KEY) return json({ error: 'Billing is not connected yet — set STRIPE_SECRET_KEY.' }, 500);
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders(req) });
+  if (!STRIPE_SECRET_KEY) return json(req, { error: 'Billing is not connected yet — set STRIPE_SECRET_KEY.' }, 500);
 
   try {
     const authHeader = req.headers.get('Authorization');
-    if (!authHeader) return json({ error: 'Missing Authorization header' }, 401);
+    if (!authHeader) return json(req, { error: 'Missing Authorization header' }, 401);
 
     const body = await req.json();
     const workspaceId = body.workspaceId as string;
     const plan = body.plan as Plan;
     if (!workspaceId || !['starter', 'pro', 'business'].includes(plan)) {
-      return json({ error: 'workspaceId and plan (starter|pro|business) are required' }, 400);
+      return json(req, { error: 'workspaceId and plan (starter|pro|business) are required' }, 400);
     }
 
     const priceId = priceFor(plan);
-    if (!priceId) return json({ error: `STRIPE_PRICE_${plan.toUpperCase()} is not set` }, 500);
+    if (!priceId) return json(req, { error: `STRIPE_PRICE_${plan.toUpperCase()} is not set` }, 500);
 
     const callerClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
       global: { headers: { Authorization: authHeader } },
     });
     const { data: userData } = await callerClient.auth.getUser();
-    if (!userData?.user) return json({ error: 'Not authenticated' }, 401);
+    if (!userData?.user) return json(req, { error: 'Not authenticated' }, 401);
 
     const { data: membership } = await callerClient
       .from('workspace_members')
@@ -58,10 +64,10 @@ Deno.serve(async (req) => {
       .eq('user_id', userData.user.id)
       .maybeSingle();
     if (!membership || (membership.role !== 'owner' && membership.role !== 'admin')) {
-      return json({ error: 'Only workspace owners/admins can change billing.' }, 403);
+      return json(req, { error: 'Only workspace owners/admins can change billing.' }, 403);
     }
 
-    const origin = req.headers.get('origin') ?? '';
+    const origin = APP_URL || req.headers.get('origin') || new URL(req.url).origin;
     const params = new URLSearchParams({
       mode: 'subscription',
       'line_items[0][price]': priceId,
@@ -98,12 +104,12 @@ Deno.serve(async (req) => {
 
     if (!stripeRes.ok) {
       const text = await stripeRes.text();
-      return json({ error: `Stripe error: ${text.slice(0, 300)}` }, 500);
+      return json(req, { error: `Stripe error: ${text.slice(0, 300)}` }, 500);
     }
 
     const session = await stripeRes.json();
-    return json({ url: session.url });
+    return json(req, { url: session.url });
   } catch (err) {
-    return json({ error: err instanceof Error ? err.message : 'Unknown error' }, 500);
+    return json(req, { error: err instanceof Error ? err.message : 'Unknown error' }, 500);
   }
 });
