@@ -162,6 +162,7 @@ function AppShell() {
   };
 
   const [activeDecisionId, setActiveDecisionId] = useState<string | null>(null);
+  const [activeCommentId, setActiveCommentId] = useState<string | null>(null);
   const [selectedTopic, setSelectedTopic] = useState<TopicNode | null>(null);
   const [message, setMessage] = useState('');
   const [intent, setIntent] = useState<IntentWave>('standard');
@@ -226,9 +227,10 @@ function AppShell() {
     return () => { client.removeChannel(channel); };
   }, [workspace, refreshWorkspaceData]);
 
-  const openDecision = (id: string) => {
+  const openDecision = (id: string, commentId?: string) => {
     if (!isSupabaseConfigured) { setNotice('Connect Supabase to open the full Decision Room — this is demo data.'); return; }
     setActiveDecisionId(id);
+    setActiveCommentId(commentId ?? null);
   };
 
   const switchWorkspace = async (id: string) => { setView('dashboard'); await loadWorkspaceById(id); };
@@ -481,10 +483,11 @@ function AppShell() {
       {activeDecisionId && (
         <DecisionRoom
           decisionId={activeDecisionId}
+          focusCommentId={activeCommentId}
           members={members}
           isAdmin={isAdmin}
           aiEnabled={aiEnabled}
-          onClose={() => { setActiveDecisionId(null); if (workspace) refreshWorkspaceData(workspace.id); }}
+          onClose={() => { setActiveDecisionId(null); setActiveCommentId(null); if (workspace) refreshWorkspaceData(workspace.id); }}
         />
       )}
 

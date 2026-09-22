@@ -566,19 +566,29 @@ export async function listDecisionComments(decisionId: string): Promise<Decision
 
 export async function addDecisionComment(decisionId: string, authorId: string, body: string, mentionedUserIds: string[], parentCommentId?: string | null) {
   if (!supabase) throw new Error('Supabase is not configured.');
-  const { error } = await supabase.from('decision_comments').insert({
+  const client = supabase;
+  const { data: insertedComment, error } = await client.from('decision_comments').insert({
     decision_id: decisionId,
     author_id: authorId,
     body,
     mentioned_user_ids: mentionedUserIds,
     parent_comment_id: parentCommentId ?? null,
-  });
+  }).select('id').single();
   if (error) throw new Error(error.message);
 
   const others = mentionedUserIds.filter((id) => id !== authorId);
-  if (others.length > 0) {
-    const { data: author } = await supabase.from('profiles').select('full_name').eq('id', authorId).maybeSingle();
-    await Promise.all(others.map((id) => notifyMentioned(id, author?.full_name ?? 'A teammate', body.slice(0, 140))));
+  const parent = parentCommentId ? (await client.from('decision_comments').select('author_id').eq('id', parentCommentId).maybeSingle()).data : null;
+  const recipients = [...new Set([...others, ...(parent?.author_id && parent.author_id !== authorId ? [parent.author_id] : [])])];
+  if (recipients.length > 0) {
+    const { data: author } = await client.from('profiles').select('full_name').eq('id', authorId).maybeSingle();
+    const actorName = author?.full_name ?? 'A teammate';
+    await Promise.all(recipients.map((id) => client.rpc('create_decision_comment_notification', {
+      p_decision_id: decisionId, p_comment_id: insertedComment?.id ?? null, p_recipient_id: id,
+      p_type: parent?.author_id === id ? 'decision_comment_reply' : 'decision_comment_mention',
+      p_title: parent?.author_id === id ? `${actorName} replied to your comment` : `${actorName} mentioned you`,
+      p_body: body.slice(0, 140),
+    })));
+    await Promise.all(recipients.map((id) => notifyMentioned(id, actorName, body.slice(0, 140))));
   }
 }
 
@@ -1766,6 +1776,13 @@ export async function listAuditLog(workspaceId: string): Promise<AuditLogEntry[]
     let targetId: string | null = null;
     if (row.action.startsWith('member.')) { targetType = 'team'; targetId = row.action === 'member.role_changed' || row.action === 'member.removed' ? row.detail?.match(UUID_RE)?.[0] ?? null : null; }
     else if (row.action.startsWith('invite.')) { targetType = 'invitations'; targetId = row.detail?.match(UUID_RE)?.[0] ?? null; }
+    else if (row.action === 'decision_comment_added' && row.detail) {
+      try {
+        const parsed = JSON.parse(row.detail) as { decision_id?: string };
+        targetId = parsed.decision_id ?? null;
+        targetType = targetId ? 'decision' : null;
+      } catch { /* legacy/non-JSON audit entries */ }
+    }
     else if (row.action === 'content.reported' && row.detail) {
       try {
         const parsed = JSON.parse(row.detail) as { targetType?: string; targetId?: string };
@@ -2219,27 +2236,36 @@ async function notifyByPush(userId: string, category: 'mentions' | 'decisions' |
   catch { /* best-effort — push failures never block the underlying action */ }
 }
 
-export type NotificationTargetType = 'decision' | 'action' | 'team' | 'invitations' | 'notifications' | null;
-export interface PulseNotification { id: string; type: string; title: string; body: string | null; readAt: string | null; createdAt: string; targetType: NotificationTargetType; targetId: string | null; }
+export type NotificationTargetType = 'decision' | 'decision_comment' | 'action' | 'team' | 'invitations' | 'notifications' | null;
+export interface PulseNotification { id: string; type: string; title: string; body: string | null; readAt: string | null; createdAt: string; targetType: NotificationTargetType; targetId: string | null; targetCommentId: string | null; }
 
 const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i;
 
-export function getNotificationTarget(notification: Pick<PulseNotification, 'type' | 'body'>): { type: NotificationTargetType; id: string | null } {
+export function getNotificationTarget(notification: Pick<PulseNotification, 'type' | 'body'> & { targetType?: NotificationTargetType | null; targetId?: string | null; targetCommentId?: string | null }): { type: NotificationTargetType; id: string | null; commentId: string | null } {
+  if (notification.targetType && notification.targetId) return { type: notification.targetType, id: notification.targetId, commentId: notification.targetCommentId ?? null };
   const id = notification.body?.match(UUID_RE)?.[0] ?? null;
-  if (!id) return { type: notification.type.startsWith('invitation') ? 'invitations' : 'notifications', id: null };
-  if (notification.type.startsWith('automation:') || notification.type.includes('action')) return { type: 'action', id };
-  if (notification.type === 'decision_outcome_review' || notification.type.includes('decision')) return { type: 'decision', id };
-  return { type: 'notifications', id: null };
+  if (!id) return { type: notification.type.startsWith('invitation') ? 'invitations' : 'notifications', id: null, commentId: null };
+  if (notification.type.startsWith('automation:') || notification.type.includes('action')) return { type: 'action', id, commentId: null };
+  if (notification.type === 'decision_comment_mention' || notification.type === 'decision_comment_reply') return { type: 'decision_comment', id, commentId: null };
+  if (notification.type === 'decision_outcome_review' || notification.type.includes('decision')) return { type: 'decision', id, commentId: null };
+  return { type: 'notifications', id: null, commentId: null };
 }
 
-function mapNotification(n: any): PulseNotification {
-  const target = getNotificationTarget({ type: String(n.type ?? ''), body: n.body ?? null });
-  return { id: n.id, type: n.type, title: n.title, body: n.body, readAt: n.read_at, createdAt: n.created_at, targetType: target.type, targetId: target.id };
+function isNotificationTargetType(value: string | null | undefined): value is Exclude<NotificationTargetType, null> {
+  return value === 'decision' || value === 'decision_comment' || value === 'action' || value === 'team' || value === 'invitations' || value === 'notifications';
+}
+
+function mapNotification(n: { id: string; type?: string | null; title?: string | null; body?: string | null; read_at?: string | null; created_at: string; target_type?: string | null; target_id?: string | null; target_comment_id?: string | null }): PulseNotification {
+  const type = n.type ?? 'notification';
+  const title = n.title ?? 'Notification';
+  const targetType = isNotificationTargetType(n.target_type) ? n.target_type : null;
+  const target = getNotificationTarget({ type, body: n.body ?? null, targetType, targetId: n.target_id ?? null, targetCommentId: n.target_comment_id ?? null });
+  return { id: n.id, type, title, body: n.body ?? null, readAt: n.read_at ?? null, createdAt: n.created_at, targetType: target.type, targetId: target.id, targetCommentId: target.commentId };
 }
 
 export async function listNotifications(limit = 40): Promise<PulseNotification[]> {
   if (!supabase) return [];
-  const { data, error } = await supabase.from('notifications').select('id,type,title,body,read_at,created_at').order('created_at', { ascending: false }).limit(limit);
+  const { data, error } = await supabase.from('notifications').select('id,type,title,body,read_at,created_at,target_type,target_id,target_comment_id').order('created_at', { ascending: false }).limit(limit);
   if (error) throw new Error(error.message);
   return (data ?? []).map(mapNotification);
 }

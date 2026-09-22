@@ -57,7 +57,7 @@ export function CommentThread({ comments, members, onSubmit }: CommentThreadProp
   };
 
   const Comment = ({ comment, nested }: { comment: DecisionComment; nested?: boolean }) => (
-    <div className={nested ? 'ml-8 mt-2' : ''}>
+    <div id={`pulse-comment-${comment.id}`} className={`rounded-xl transition-shadow ${nested ? 'ml-8 mt-2' : ''}`}>
       <div className="flex gap-2.5">
         <div className="avatar h-7 w-7 shrink-0 text-[10px]">{comment.authorName.slice(0, 1).toUpperCase()}</div>
         <div className="min-w-0 flex-1">

@@ -16,7 +16,7 @@ interface HomeHeaderProps {
   onToggleSearch: () => void;
   onOpenNav: () => void;
   onNavigate: (view: AppView) => void;
-  onOpenDecision: (id: string) => void;
+  onOpenDecision: (id: string, commentId?: string) => void;
 }
 
 export function HomeHeader({ memberCount, isLive, activity, searchOpen, onToggleSearch, onOpenNav, onNavigate, onOpenDecision }: HomeHeaderProps) {

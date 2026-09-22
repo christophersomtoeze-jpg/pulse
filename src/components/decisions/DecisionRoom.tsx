@@ -33,9 +33,10 @@ interface DecisionRoomProps {
   isAdmin: boolean;
   aiEnabled?: boolean;
   onClose: () => void;
+  focusCommentId?: string | null;
 }
 
-export function DecisionRoom({ decisionId, members, isAdmin, aiEnabled = true, onClose }: DecisionRoomProps) {
+export function DecisionRoom({ decisionId, members, isAdmin, aiEnabled = true, onClose, focusCommentId = null }: DecisionRoomProps) {
   const { user } = useAuth();
   const [decision, setDecision] = useState<DecisionSummary | null>(null);
   const [resources, setResources] = useState<DecisionResource[]>([]);
@@ -76,6 +77,16 @@ export function DecisionRoom({ decisionId, members, isAdmin, aiEnabled = true, o
   }, [decisionId, user]);
 
   useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    if (!focusCommentId || !comments.length) return;
+    requestAnimationFrame(() => {
+      const el = document.getElementById(`pulse-comment-${focusCommentId}`);
+      el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      el?.classList.add('ring-2', 'ring-pulse-400/50');
+      window.setTimeout(() => el?.classList.remove('ring-2', 'ring-pulse-400/50'), 2200);
+    });
+  }, [focusCommentId, comments.length]);
 
   useEffect(() => {
     if (!supabase) return;

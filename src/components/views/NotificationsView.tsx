@@ -11,7 +11,7 @@ function timeAgo(iso: string): string { const mins=Math.max(0,Math.floor((Date.n
 interface NotificationsViewProps {
   activity: DecisionHistoryEntry[];
   onNavigate: (view: AppView) => void;
-  onOpenDecision: (id: string) => void;
+  onOpenDecision: (id: string, commentId?: string) => void;
 }
 
 export function NotificationsView({ activity, onNavigate, onOpenDecision }: NotificationsViewProps) {
@@ -32,7 +32,7 @@ export function NotificationsView({ activity, onNavigate, onOpenDecision }: Noti
   const clear=async()=>{if(!window.confirm('Clear all notifications? This cannot be undone.'))return;setBusy(true);setError('');try{await clearAllNotifications();setItems([])}catch(e){setError(e instanceof Error?e.message:'Could not clear notifications')}finally{setBusy(false)}};
   const openNotification = async (n: PulseNotification) => {
     if (!n.readAt) await mark(n.id);
-    if (n.targetType === 'decision' && n.targetId) { onOpenDecision(n.targetId); return; }
+    if ((n.targetType === 'decision' || n.targetType === 'decision_comment') && n.targetId) { onOpenDecision(n.targetId, n.targetCommentId ?? undefined); return; }
     if (n.targetType === 'action') { onNavigate('actions'); return; }
     if (n.targetType === 'team') { onNavigate('team'); return; }
     if (n.targetType === 'invitations') { onNavigate('invitations'); return; }
